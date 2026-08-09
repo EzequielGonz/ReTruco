@@ -43,11 +43,23 @@ export interface GameState {
   manos: Mano[]
   currentManoIndex: number
   currentPlayerIndex: number
+  // Index of who had the turn before a call interrupted the flow
+  preBidPlayerIndex: number
   trucoLevel: 0 | 1 | 2 | 3
   envidoLevel: 0 | 1 | 2 | 3
   florLevel: 0 | 1 | 2
+  // Who originally called truco/envido/flor (to show correct modal text)
+  trucoCaller: string | null
+  envidoCaller: string | null
+  florCaller: string | null
+  // Whether envido has been resolved already this hand
+  envidoResolved: boolean
+  // Number of tricks played this hand (to block envido after 1st trick)
+  tricksPlayedThisHand: number
   gamePhase: 'truco' | 'envido' | 'envido_points' | 'flor' | 'playing' | 'finished'
   envidoPointsCall?: { playerId: string; points: number }
+  // Toast shown when bot responds to a bid (quiero/no quiero)
+  botToast?: { text: string; color: string; id: string }
   currentTurn: string
   puntos: { [key: string]: number }
   targetPoints: number

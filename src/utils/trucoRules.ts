@@ -172,19 +172,37 @@ export function determineManoWinner(cards: { playerId: string; card: Card }[]): 
 
 export function getTrucoPoints(level: number): number {
   switch (level) {
-    case 1: return 2 // Truco = 2 points
-    case 2: return 3 // Retruco = 3 points
-    case 3: return 4 // Vale cuatro = 4 points
-    default: return 1 // Not accepted = 1 point
+    case 1: return 2  // Truco querido = 2 pts
+    case 2: return 3  // Retruco querido = 3 pts
+    case 3: return 4  // Vale Cuatro querido = 4 pts
+    default: return 1 // Nadie cantó truco = 1 pt
   }
 }
 
-export function getEnvidoPoints(level: number): number {
+// Returns points for envido when "querido"
+// Envido=2, Real Envido=3, Falta Envido is calculated at call time
+export function getEnvidoPoints(level: number, targetPoints?: number, losingScore?: number): number {
   switch (level) {
-    case 1: return 2 // Envido
-    case 2: return 4 // Real Envido or Envido Envido (simplified)
-    case 3: return 5 // Falta Envido (simplified for now, usually it's points left to win)
-    default: return 1 // Not accepted = 1
+    case 1: return 2  // Envido
+    case 2: return 3  // Real Envido
+    case 3: return targetPoints !== undefined && losingScore !== undefined
+      ? Math.max(targetPoints - losingScore, 1) // Falta Envido = points needed by losing player
+      : 3
+    default: return 1
+  }
+}
+
+// Points when "no quiero" is said — always 1 less than the called level
+export function getEnvidoNoQuieroPoints(level: number): number {
+  // No quiero: caller gets points = level-1 (but at least 1)
+  // Envido no querido = 1, Real Envido no querido = 2 (if envido was called first) or 1
+  // For simplicity per official rules: no quiero always gives 1pt to caller at level 1,
+  // and the value of the previous level accepted for higher levels
+  switch (level) {
+    case 1: return 1  // No quiero envido = 1
+    case 2: return 2  // No quiero real envido (if envido was accepted = 2+1=3; if called alone = 2)
+    case 3: return 3  // No quiero falta envido
+    default: return 1
   }
 }
 

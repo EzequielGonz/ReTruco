@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { Card } from '../../types'
 import { getCardPower } from '../../utils/trucoRules'
@@ -15,71 +15,95 @@ interface SpanishCardProps {
   showPower?: boolean
 }
 
-// SVG suit icons drawn as paths
-function SuitIcon({ suit, size = 16, color }: { suit: string; size?: number; color: string }) {
-  const icons: Record<string, React.ReactNode> = {
-    espadas: (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <path d="M12 2L6 10H10L8 16H12M12 2L18 10H14L16 16H12M12 16V22" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        <path d="M8 22H16" stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-      </svg>
-    ),
-    oros: (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="12" r="8" stroke={color} strokeWidth="1.5" fill={`${color}22`}/>
-        <circle cx="12" cy="12" r="5" stroke={color} strokeWidth="1" fill={`${color}33`}/>
-        <circle cx="12" cy="12" r="2" fill={color}/>
-      </svg>
-    ),
-    copas: (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <path d="M6 4H18C18 4 20 8 20 11C20 14 18 16 14 16C13 16 12.5 17 12 18.5M8 22H16M12 18.5V22M6 4C6 4 4 8 4 11C4 14 6 16 10 16C11 16 11.5 17 12 18.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    ),
-    bastos: (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <path d="M12 3C12 3 15 6 15 9C15 12 12 12 12 12C12 12 9 12 9 9C9 6 12 3 12 3Z" stroke={color} strokeWidth="1.5" fill={`${color}22`}/>
-        <path d="M5 14C5 14 8 11 11 11C11 11 11 14 9 16C7 18 5 14 5 14Z" stroke={color} strokeWidth="1.5" fill={`${color}22`}/>
-        <path d="M19 14C19 14 16 11 13 11C13 11 13 14 15 16C17 18 19 14 19 14Z" stroke={color} strokeWidth="1.5" fill={`${color}22`}/>
-        <path d="M10 18H14L13 22H11L10 18Z" stroke={color} strokeWidth="1.5" fill={`${color}22`}/>
-      </svg>
-    ),
-  }
-  return <>{icons[suit] || null}</>
+// Base URL for real Spanish card images (Baraja española, Industria Argentina style)
+// Repo: github.com/mcmd/playingcards.io-spanish.playing.cards (GPL-compatible)
+const CDN = 'https://raw.githubusercontent.com/mcmd/playingcards.io-spanish.playing.cards/master/img'
+
+// Maps our rank numbers to the two-digit string used in filenames
+const RANK_FILE: Record<number, string> = {
+  1: '01', 2: '02', 3: '03', 4: '04', 5: '05',
+  6: '06', 7: '07', 10: '10', 11: '11', 12: '12',
 }
 
-const SUIT_CONFIG: Record<string, { color: string; name: string; label: string }> = {
-  espadas: { color: '#2c3e50', name: 'Espadas', label: 'ESP' },
-  oros: { color: '#c9920a', name: 'Oros', label: 'ORO' },
-  copas: { color: '#c41e3a', name: 'Copas', label: 'COP' },
-  bastos: { color: '#1e6b2e', name: 'Bastos', label: 'BAS' },
+function cardImageUrl(card: Pick<Card, 'suit' | 'rank'>): string {
+  return `${CDN}/${RANK_FILE[card.rank]}-${card.suit}.png`
 }
 
-const RANK_LABEL: Record<number, string> = {
-  1: 'As', 2: '2', 3: '3', 4: '4', 5: '5',
-  6: '6', 7: '7', 10: 'S', 11: 'C', 12: 'R',
-}
+const CARD_BACK_URL = `${CDN}/reverso.png`
 
-const RANK_FULL: Record<number, string> = {
-  1: 'AS', 2: 'DOS', 3: 'TRES', 4: 'CUATRO', 5: 'CINCO',
-  6: 'SEIS', 7: 'SIETE', 10: 'SOTA', 11: 'CABALLO', 12: 'REY',
-}
-
-// Power tier badges for special cards
-const POWER_SPECIALS: Record<string, { label: string; color: string }> = {
-  'espadas-1': { label: '★ El Macho', color: '#d4af37' },
-  'bastos-1': { label: '★ El Patrón', color: '#22c55e' },
-  'espadas-7': { label: '☆ 7 Esp', color: '#60a5fa' },
-  'oros-7': { label: '☆ 7 Oros', color: '#f59e0b' },
+// Power badge for the top-4 cards
+const SPECIAL_BADGES: Record<string, { label: string; color: string }> = {
+  'espadas-1': { label: '★ Ancho E', color: '#1e3a5f' },
+  'bastos-1':  { label: '★ Ancho B', color: '#14532d' },
+  'espadas-7': { label: '7 Espadas', color: '#1d4ed8' },
+  'oros-7':    { label: '7 Oros',    color: '#92400e' },
 }
 
 const SIZES = {
-  tiny: { w: 52, h: 78, rankSize: 10, suitSize: 10, centerSize: 22, nameSize: 7 },
-  small: { w: 68, h: 102, rankSize: 13, suitSize: 13, centerSize: 28, nameSize: 8 },
-  medium: { w: 88, h: 132, rankSize: 16, suitSize: 16, centerSize: 36, nameSize: 10 },
-  large: { w: 110, h: 165, rankSize: 20, suitSize: 18, centerSize: 44, nameSize: 12 },
+  tiny:   { w: 52,  h: 80  },
+  small:  { w: 68,  h: 104 },
+  medium: { w: 90,  h: 138 },
+  large:  { w: 112, h: 172 },
 }
 
+// ── Fallback SVG card (shown while image loads or on error) ───
+function FallbackCard({ card, w, h }: { card: Pick<Card, 'suit' | 'rank'>; w: number; h: number }) {
+  const SUIT_COLORS: Record<string, string> = {
+    espadas: '#1e3a5f', oros: '#a0600a', copas: '#991b1b', bastos: '#14532d',
+  }
+  const RANK_LABEL: Record<number, string> = {
+    1:'A', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6', 7:'7', 10:'S', 11:'C', 12:'R',
+  }
+  const SUIT_CHAR: Record<string, string> = {
+    espadas: '⚔', oros: '◉', copas: '♥', bastos: '♣',
+  }
+  const color = SUIT_COLORS[card.suit] || '#333'
+  return (
+    <div style={{
+      width: w, height: h, borderRadius: 8,
+      background: 'linear-gradient(160deg,#fefdf5,#f8f0d8)',
+      border: `2px solid ${color}66`,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 4,
+    }}>
+      <span style={{ fontSize: Math.round(w * 0.28), fontWeight: 900, color, fontFamily: 'serif', lineHeight: 1 }}>
+        {RANK_LABEL[card.rank]}
+      </span>
+      <span style={{ fontSize: Math.round(w * 0.22), color, lineHeight: 1 }}>
+        {SUIT_CHAR[card.suit]}
+      </span>
+    </div>
+  )
+}
+
+// ── Card Back ─────────────────────────────────────────────────
+function CardBack({ w, h }: { w: number; h: number }) {
+  const [imgOk, setImgOk] = useState(true)
+  return (
+    <div style={{ width: w, height: h, borderRadius: 10, overflow: 'hidden', flexShrink: 0,
+      border: '2px solid rgba(212,175,55,0.5)',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+      background: '#0d2016',
+    }}>
+      {imgOk ? (
+        <img
+          src={CARD_BACK_URL}
+          alt="reverso"
+          width={w}
+          height={h}
+          onError={() => setImgOk(false)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : (
+        <div style={{ width: w, height: h, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ color: 'rgba(212,175,55,0.4)', fontFamily: 'serif', fontSize: w * 0.3, fontWeight: 900 }}>RT</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main SpanishCard ──────────────────────────────────────────
 const SpanishCard = memo(function SpanishCard({
   card,
   onClick,
@@ -91,221 +115,155 @@ const SpanishCard = memo(function SpanishCard({
   className = '',
   showPower = false,
 }: SpanishCardProps) {
-  const { w, h, rankSize, suitSize, centerSize, nameSize } = SIZES[size]
-  const suit = SUIT_CONFIG[card.suit] || { color: '#333', name: '?', label: '?' }
+  const { w, h } = SIZES[size]
+  const [imgLoaded, setImgLoaded] = useState(false)
+  const [imgError, setImgError] = useState(false)
   const power = getCardPower(card)
   const specialKey = `${card.suit}-${card.rank}`
-  const special = POWER_SPECIALS[specialKey]
-  const isSpecial = !!special
-  const isTopCard = power <= 4 // top 4 most powerful cards
+  const badge = SPECIAL_BADGES[specialKey]
+  const isTopPower = power <= 4
 
   if (faceDown) {
     return (
-      <div
-        className={`relative rounded-xl select-none ${className}`}
-        style={{
-          width: w,
-          height: h,
-          background: 'linear-gradient(145deg, #0d2016 0%, #163024 100%)',
-          border: '2px solid rgba(212,175,55,0.4)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-          flexShrink: 0,
-        }}
+      <motion.div
+        className={`relative select-none ${className}`}
+        style={{ flexShrink: 0 }}
+        whileHover={{ y: -4, rotateY: 5 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 20 }}
       >
-        {/* Back pattern */}
-        <div
-          className="absolute inset-1 rounded-lg"
-          style={{
-            background: `
-              repeating-linear-gradient(
-                45deg,
-                rgba(212,175,55,0.07) 0px,
-                rgba(212,175,55,0.07) 1px,
-                transparent 1px,
-                transparent 8px
-              ),
-              repeating-linear-gradient(
-                -45deg,
-                rgba(212,175,55,0.07) 0px,
-                rgba(212,175,55,0.07) 1px,
-                transparent 1px,
-                transparent 8px
-              )
-            `,
-            border: '1px solid rgba(212,175,55,0.2)',
-          }}
-        />
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{
-            fontFamily: 'Playfair Display, serif',
-            fontSize: rankSize + 4,
-            color: 'rgba(212,175,55,0.3)',
-            fontWeight: 900,
-          }}
-        >
-          RT
-        </div>
-      </div>
+        <CardBack w={w} h={h} />
+      </motion.div>
     )
   }
 
+  const imgUrl = cardImageUrl(card)
+
   return (
     <motion.div
-      whileHover={isPlayable && !disabled ? { scale: 1.08, y: -14, rotate: 0 } : {}}
-      whileTap={isPlayable && !disabled ? { scale: 0.95 } : {}}
-      transition={{ type: 'spring', stiffness: 450, damping: 18 }}
       onClick={!disabled ? onClick : undefined}
-      className={`relative select-none ${isPlayable && !disabled ? 'cursor-pointer' : disabled ? 'cursor-not-allowed' : 'cursor-default'} ${className}`}
+      className={`relative select-none ${className}`}
       style={{
-        width: w,
-        height: h,
-        flexShrink: 0,
-        transform: isPlayable && !disabled ? 'rotate(-1deg)' : undefined,
+        width: w, height: h, flexShrink: 0,
+        cursor: isPlayable && !disabled ? 'pointer' : disabled ? 'not-allowed' : 'default',
       }}
+      whileHover={isPlayable && !disabled ? {
+        y: -18, rotateY: -6, rotateX: 4, scale: 1.08,
+        filter: 'drop-shadow(0 20px 32px rgba(0,0,0,0.65)) drop-shadow(0 0 12px rgba(212,175,55,0.3))',
+      } : {}}
+      whileTap={isPlayable && !disabled ? { scale: 0.96, y: -8 } : {}}
+      transition={{ type: 'spring', stiffness: 420, damping: 22 }}
     >
-      {/* Card body */}
+      {/* Image container */}
       <div
-        className="absolute inset-0 rounded-xl flex flex-col overflow-hidden"
         style={{
-          background: selected
-            ? 'linear-gradient(145deg, #fff8e7 0%, #f5e6c8 100%)'
-            : 'linear-gradient(145deg, #fefce8 0%, #fdf6e3 50%, #f5e6c8 100%)',
+          width: w, height: h, borderRadius: 8, overflow: 'hidden',
           border: selected
             ? '2px solid #d4af37'
-            : isSpecial
-            ? `2px solid ${suit.color}55`
-            : '2px solid rgba(212,175,55,0.35)',
+            : isTopPower
+            ? '2px solid rgba(212,175,55,0.7)'
+            : '2px solid rgba(0,0,0,0.15)',
           boxShadow: selected
-            ? `0 0 0 3px rgba(212,175,55,0.4), 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(212,175,55,0.25)`
-            : isTopCard
-            ? `0 0 15px ${suit.color}22, 0 6px 20px rgba(0,0,0,0.4)`
-            : '0 4px 16px rgba(0,0,0,0.4)',
-          opacity: disabled ? 0.45 : 1,
-          transition: 'box-shadow 0.2s, border-color 0.2s',
+            ? '0 0 0 3px rgba(212,175,55,0.5), 0 12px 36px rgba(0,0,0,0.6)'
+            : isTopPower
+            ? '0 0 16px rgba(212,175,55,0.35), 0 8px 24px rgba(0,0,0,0.5)'
+            : '0 4px 16px rgba(0,0,0,0.45)',
+          opacity: disabled ? 0.4 : 1,
+          transition: 'opacity 0.2s, box-shadow 0.25s',
+          position: 'relative',
+          background: '#f8f0d8',
         }}
       >
-        {/* Inner border (traditional card look) */}
-        <div
-          className="absolute inset-1.5 rounded-lg pointer-events-none"
-          style={{
-            border: `1px solid ${suit.color}25`,
-          }}
-        />
+        {/* Skeleton while loading */}
+        {!imgLoaded && !imgError && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(110deg,#f0e8d0 30%,#fdf6e3 50%,#f0e8d0 70%)',
+            backgroundSize: '200% 100%',
+            animation: 'shimmer 1.2s linear infinite',
+          }} />
+        )}
 
-        {/* Top-left rank/suit */}
-        <div className="absolute top-1.5 left-2 flex flex-col items-center gap-0.5 z-10">
-          <span
+        {/* Real card image */}
+        {!imgError ? (
+          <img
+            src={imgUrl}
+            alt={`${card.rank} de ${card.suit}`}
+            width={w}
+            height={h}
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
             style={{
-              fontSize: rankSize,
-              fontWeight: 800,
-              color: suit.color,
-              fontFamily: 'Playfair Display, serif',
-              lineHeight: 1,
+              width: '100%', height: '100%', objectFit: 'fill',
+              display: 'block',
+              opacity: imgLoaded ? 1 : 0,
+              transition: 'opacity 0.25s',
             }}
-          >
-            {RANK_LABEL[card.rank]}
-          </span>
-          <SuitIcon suit={card.suit} size={suitSize} color={suit.color} />
-        </div>
+          />
+        ) : (
+          <FallbackCard card={card} w={w} h={h} />
+        )}
 
-        {/* Bottom-right rank/suit (rotated) */}
-        <div
-          className="absolute bottom-1.5 right-2 flex flex-col items-center gap-0.5 z-10"
-          style={{ transform: 'rotate(180deg)' }}
-        >
-          <span
-            style={{
-              fontSize: rankSize,
-              fontWeight: 800,
-              color: suit.color,
-              fontFamily: 'Playfair Display, serif',
-              lineHeight: 1,
-            }}
-          >
-            {RANK_LABEL[card.rank]}
-          </span>
-          <SuitIcon suit={card.suit} size={suitSize} color={suit.color} />
-        </div>
+        {/* Shimmer overlay for top-power cards */}
+        {isTopPower && imgLoaded && (
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: 'linear-gradient(125deg,transparent 30%,rgba(255,220,60,0.15) 50%,transparent 70%)', backgroundSize: '250%' }}
+            animate={{ backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'] }}
+            transition={{ duration: 3.5, repeat: Infinity, ease: 'linear' }}
+          />
+        )}
 
-        {/* Center area */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-1 pt-6 pb-6">
-          {/* Large suit icon */}
-          <SuitIcon suit={card.suit} size={centerSize} color={suit.color} />
-          {/* Rank name */}
-          <span
-            style={{
-              fontSize: nameSize,
-              fontWeight: 600,
-              color: `${suit.color}99`,
-              fontFamily: 'Inter, sans-serif',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-            }}
-          >
-            {RANK_FULL[card.rank]}
-          </span>
-        </div>
-
-        {/* Special card shimmer overlay */}
-        {isTopCard && (
-          <div
-            className="absolute inset-0 rounded-xl pointer-events-none"
-            style={{
-              background: `linear-gradient(135deg, transparent 30%, ${suit.color}08 50%, transparent 70%)`,
-              backgroundSize: '200% 200%',
-              animation: 'shimmer 3s linear infinite',
-            }}
+        {/* Selected pulse */}
+        {selected && (
+          <motion.div
+            className="absolute inset-0 rounded-lg pointer-events-none"
+            animate={{ opacity: [0.4, 0.9, 0.4] }}
+            transition={{ duration: 1.4, repeat: Infinity }}
+            style={{ boxShadow: '0 0 0 3px rgba(212,175,55,0.8), 0 0 24px rgba(212,175,55,0.5)', borderRadius: 6 }}
           />
         )}
       </div>
 
-      {/* Special badge for macho/patrón/7 special */}
-      {isSpecial && size !== 'tiny' && (
+      {/* Special badge */}
+      {badge && size !== 'tiny' && (
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
-          transition={{ delay: 0.1 }}
-          className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-full text-center z-20"
+          transition={{ delay: 0.1, type: 'spring', stiffness: 400 }}
           style={{
-            background: `linear-gradient(135deg, ${special.color}33, ${special.color}11)`,
-            border: `1px solid ${special.color}66`,
-            fontSize: 8,
-            fontWeight: 700,
-            color: special.color,
-            letterSpacing: '0.05em',
+            position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
+            whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 99,
+            background: badge.color, border: '1px solid rgba(255,255,255,0.25)',
+            fontSize: size === 'large' ? 8.5 : 7.5, fontWeight: 800,
+            color: '#fff', letterSpacing: '0.05em',
+            boxShadow: `0 2px 8px ${badge.color}99`, zIndex: 20,
           }}
         >
-          {special.label}
+          {badge.label}
         </motion.div>
       )}
 
-      {/* Power indicator */}
+      {/* Power bubble */}
       {showPower && isPlayable && !disabled && (
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
-          className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shadow-lg z-20"
           style={{
-            background: 'linear-gradient(135deg, #d4af37, #8a7030)',
-            color: '#1a1000',
-            fontSize: 9,
+            position: 'absolute', top: -8, right: -8,
+            width: 20, height: 20, borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: power <= 4
+              ? 'linear-gradient(135deg,#d4af37,#f0d060)'
+              : power <= 8
+              ? 'linear-gradient(135deg,#60a5fa,#3b82f6)'
+              : 'linear-gradient(135deg,#6b7280,#4b5563)',
+            color: power <= 4 ? '#1a1000' : '#fff',
+            fontSize: 8, fontWeight: 900,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.5)', zIndex: 20,
           }}
         >
-          {16 - power}
+          {17 - power}
         </motion.div>
-      )}
-
-      {/* Selection ring glow */}
-      {selected && (
-        <motion.div
-          className="absolute inset-0 rounded-xl pointer-events-none"
-          animate={{ opacity: [0.5, 1, 0.5] }}
-          transition={{ duration: 1.5, repeat: Infinity }}
-          style={{
-            boxShadow: '0 0 0 3px rgba(212,175,55,0.6), 0 0 30px rgba(212,175,55,0.3)',
-          }}
-        />
       )}
     </motion.div>
   )

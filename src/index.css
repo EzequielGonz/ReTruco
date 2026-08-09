@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
 
 @theme {
   /* Casino Dark Palette */
@@ -98,6 +98,18 @@
   0%, 20% { opacity: 0; }
   50% { opacity: 1; }
   80%, 100% { opacity: 0; }
+}
+
+@keyframes card-deal-3d {
+  0%   { transform: translateY(-120px) rotateY(-30deg) scale(0.5); opacity: 0; }
+  60%  { transform: translateY(10px)  rotateY(6deg)  scale(1.04); opacity: 1; }
+  100% { transform: translateY(0)     rotateY(0deg)  scale(1);    opacity: 1; }
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(212,175,55,0.5); }
+  70%  { transform: scale(1);    box-shadow: 0 0 0 14px rgba(212,175,55,0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(212,175,55,0); }
 }
 
 /* ─── Base Styles ─── */
@@ -436,6 +448,14 @@
 
   .animate-card-deal {
     animation: card-deal 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  .animate-card-deal-3d {
+    animation: card-deal-3d 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  .animate-pulse-ring {
+    animation: pulse-ring 1.8s ease-out infinite;
   }
 
   .animate-score-pop {
