@@ -29,6 +29,7 @@ interface GameStoreState {
   callEnvido: (playerId: string, level: EnvidoLevel) => void
   acceptEnvido: (playerId: string) => void
   rejectEnvido: (playerId: string) => void
+  announceEnvidoPoints: (playerId: string, isSonBuenas: boolean) => void
   callFlor: (playerId: string, level: FlorLevel) => void
   acceptFlor: (playerId: string) => void
   rejectFlor: (playerId: string) => void
@@ -70,6 +71,7 @@ const createInitialGameState = (players: Player[], targetPoints: number): GameSt
     envidoLevel: 0,
     florLevel: 0,
     gamePhase: 'playing',
+    envidoPointsCall: undefined,
     currentTurn: players[0].userId,
     puntos: Object.fromEntries(players.map((p) => [p.userId, 0])),
     targetPoints,
@@ -272,50 +274,94 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!state.gameState) return state
       const player = state.gameState.players.find((p) => p.userId === playerId)
       const playerIndex = state.gameState.players.findIndex((p) => p.userId === playerId)
-      const envidoResult = calculateEnvido(state.gameState.hands[playerIndex])
-
-      if (!envidoResult.hasEnvido) {
-        return {
-          gameState: {
-            ...state.gameState,
-            gamePhase: 'playing',
-            messages: [
-              ...state.gameState.messages,
-              {
-                id: crypto.randomUUID(),
-                type: 'error',
-                text: `${player?.username} no tiene envido!`,
-                playerId,
-              },
-            ],
-          },
-        }
-      }
-
       const opponentIndex = (playerIndex + 1) % state.gameState.players.length
-      const opponentEnvido = calculateEnvido(state.gameState.hands[opponentIndex])
-      const winnerUserId =
-        envidoResult.value > opponentEnvido.value
-          ? playerId
-          : state.gameState.players[opponentIndex].userId
-      const puntos = { ...state.gameState.puntos }
-      const envidoPoints = getEnvidoPoints(state.gameState.envidoLevel || 1)
-      puntos[winnerUserId] = (puntos[winnerUserId] || 0) + envidoPoints
+      const opponentId = state.gameState.players[opponentIndex].userId
 
+      // We move to envido_points phase. The person who called (the opponent) must announce first.
       return {
         gameState: {
           ...state.gameState,
-          gamePhase: 'playing',
-          puntos,
+          gamePhase: 'envido_points',
+          currentTurn: opponentId,
           messages: [
             ...state.gameState.messages,
             {
               id: crypto.randomUUID(),
               type: 'success',
-              text: `${player?.username}: ${envidoResult.value} - ${state.gameState.players[opponentIndex].username}: ${opponentEnvido.value}`,
+              text: `¡Quiero!`,
+              playerId,
             },
           ],
         },
+      }
+    })
+  },
+
+  announceEnvidoPoints: (playerId: string, isSonBuenas: boolean) => {
+    set((state) => {
+      if (!state.gameState) return state
+      const playerIndex = state.gameState.players.findIndex((p) => p.userId === playerId)
+      const opponentIndex = (playerIndex + 1) % state.gameState.players.length
+      const playerEnvido = calculateEnvido(state.gameState.hands[playerIndex])
+      const opponentEnvido = calculateEnvido(state.gameState.hands[opponentIndex])
+
+      // If it's the second player's turn to speak (replying)
+      if (state.gameState.envidoPointsCall) {
+        const callerPoints = state.gameState.envidoPointsCall.points
+        const myPoints = playerEnvido.value
+
+        let winnerUserId = ''
+        let msgText = ''
+
+        if (isSonBuenas) {
+          winnerUserId = state.gameState.envidoPointsCall.playerId
+          msgText = `Son buenas.`
+        } else {
+          winnerUserId = myPoints > callerPoints ? playerId : state.gameState.envidoPointsCall.playerId
+          msgText = `${myPoints} son mejores.` // Simplified
+        }
+
+        const puntos = { ...state.gameState.puntos }
+        const envidoPoints = getEnvidoPoints(state.gameState.envidoLevel || 1)
+        puntos[winnerUserId] = (puntos[winnerUserId] || 0) + envidoPoints
+
+        // Back to playing phase, turn goes to whoever was originally supposed to play a card
+        return {
+          gameState: {
+            ...state.gameState,
+            gamePhase: 'playing',
+            envidoPointsCall: undefined,
+            puntos,
+            currentTurn: state.gameState.players[state.gameState.currentPlayerIndex].userId,
+            messages: [
+              ...state.gameState.messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'info',
+                text: msgText,
+                playerId,
+              },
+            ],
+          },
+        }
+      } else {
+        // First player to speak
+        return {
+          gameState: {
+            ...state.gameState,
+            envidoPointsCall: { playerId, points: playerEnvido.value },
+            currentTurn: state.gameState.players[opponentIndex].userId,
+            messages: [
+              ...state.gameState.messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'info',
+                text: `Tengo ${playerEnvido.value}.`,
+                playerId,
+              },
+            ],
+          },
+        }
       }
     })
   },
@@ -561,9 +607,27 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           get().callEnvido(currentTurn, 2)
         } else if (Math.random() > 0.5) {
           get().acceptEnvido(currentTurn)
+          setTimeout(() => get().botPlay(), 1200)
         } else {
           get().rejectEnvido(currentTurn)
         }
+        return
+      }
+
+      if (gameState.gamePhase === 'envido_points') {
+        const envidoResult = calculateEnvido(hand)
+        if (gameState.envidoPointsCall) {
+          // Bot is replying
+          if (envidoResult.value > gameState.envidoPointsCall.points) {
+            get().announceEnvidoPoints(currentTurn, false)
+          } else {
+            get().announceEnvidoPoints(currentTurn, true) // son buenas
+          }
+        } else {
+          // Bot is announcing first
+          get().announceEnvidoPoints(currentTurn, false)
+        }
+        return
       }
 
       if (gameState.gamePhase === 'flor') {

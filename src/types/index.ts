@@ -46,7 +46,8 @@ export interface GameState {
   trucoLevel: 0 | 1 | 2 | 3
   envidoLevel: 0 | 1 | 2 | 3
   florLevel: 0 | 1 | 2
-  gamePhase: 'truco' | 'envido' | 'flor' | 'playing' | 'finished'
+  gamePhase: 'truco' | 'envido' | 'envido_points' | 'flor' | 'playing' | 'finished'
+  envidoPointsCall?: { playerId: string; points: number }
   currentTurn: string
   puntos: { [key: string]: number }
   targetPoints: number

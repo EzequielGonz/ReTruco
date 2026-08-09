@@ -3,6 +3,20 @@ import type { Card } from '../types'
 export const SUITS = ['oros', 'copas', 'espadas', 'bastos'] as const
 export const RANKS = [1, 2, 3, 4, 5, 6, 7, 10, 11, 12] as const
 
+// 1. 1 de espada (ancho)
+// 2. 1 de basto (ancho)
+// 3. 7 de espada
+// 4. 7 de oro
+// 5. 3 de copa, 3 de oro, 3 de basto, 3 de espada
+// 6. 2 de copa, 2 de oro, 2 de basto, 2 de espada
+// 7. 1 de copa, 1 de oro (ancho falso)
+// 8. 12 de copa, 12 de oro, 12 de basto, 12 de espada
+// 9. 11 de copa, 11 de oro, 11 de basto, 11 de espada
+// 10. 10 de copa, 10 de oro, 10 de basto, 10 de espada
+// 11. 7 de copa, 7 de basto
+// 12. 6 de copa, 6 de oro, 6 de basto, 6 de espada
+// 13. 5 de copa, 5 de oro, 5 de basto, 5 de espada
+// 14. 4 de copa, 4 oro, 4 de basto, 4 de espada
 export const JERARQUIA = [
   { suit: 'espadas', rank: 1, power: 1 },
   { suit: 'bastos', rank: 1, power: 2 },
@@ -23,10 +37,17 @@ export const JERARQUIA = [
 ] as const
 
 export function getCardPower(card: Pick<Card, 'suit' | 'rank'>): number {
-  const index = JERARQUIA.findIndex(
+  // Check exact match first
+  const exactMatch = JERARQUIA.find(
     (j) => j.suit === card.suit && j.rank === card.rank,
   )
-  return index === -1 ? 99 : index
+  if (exactMatch) return exactMatch.power
+
+  // Check rank match for any suit
+  const rankMatch = JERARQUIA.find(
+    (j) => j.suit === null && j.rank === card.rank,
+  )
+  return rankMatch ? rankMatch.power : 99
 }
 
 export function createDeck(): Card[] {
@@ -62,31 +83,57 @@ export function dealCards(deck: Card[], players: { userId: string }[]): { hands:
   return { hands, remaining: deck.slice(deckIndex) }
 }
 
-export function calculateEnvido(hand: Card[]): { value: number; hasEnvido: boolean } {
+export function calculateEnvido(hand: Card[]): { value: number; hasEnvido: boolean; cards: Card[] } {
   const suits = new Map<string, Card[]>()
 
   for (const card of hand) {
-    if ([10, 11, 12].includes(card.rank)) continue
     const suitCards = suits.get(card.suit) || []
     suitCards.push(card)
     suits.set(card.suit, suitCards)
   }
 
   let maxEnvido = 0
+  let envidoCards: Card[] = []
   let hasEnvido = false
 
+  // Find best two cards of same suit
   for (const cards of suits.values()) {
     if (cards.length >= 2) {
-      const sorted = [...cards].sort((a, b) => b.rank - a.rank)
-      const sum = sorted[0].rank + sorted[1].rank + 20
+      // Sort by rank, considering 10,11,12 are worth 0 for envido
+      const sorted = [...cards].sort((a, b) => {
+        const valA = a.rank >= 10 ? 0 : a.rank
+        const valB = b.rank >= 10 ? 0 : b.rank
+        return valB - valA
+      })
+      
+      const val0 = sorted[0].rank >= 10 ? 0 : sorted[0].rank
+      const val1 = sorted[1].rank >= 10 ? 0 : sorted[1].rank
+      const sum = val0 + val1 + 20
+      
       if (sum > maxEnvido) {
         maxEnvido = sum
         hasEnvido = true
+        envidoCards = [sorted[0], sorted[1]]
       }
     }
   }
+  
+  // If no envido, the value is just the highest card (or 0 if all are 10,11,12)
+  if (!hasEnvido && hand.length > 0) {
+    let bestSingle = 0
+    let bestCard = hand[0]
+    for (const card of hand) {
+      const val = card.rank >= 10 ? 0 : card.rank
+      if (val >= bestSingle) {
+        bestSingle = val
+        bestCard = card
+      }
+    }
+    maxEnvido = bestSingle
+    envidoCards = [bestCard]
+  }
 
-  return { value: maxEnvido, hasEnvido }
+  return { value: maxEnvido, hasEnvido, cards: envidoCards }
 }
 
 export function hasFlor(hand: Card[]): boolean {
@@ -105,42 +152,46 @@ export function compareCards(card1: Card, card2: Card): 'higher' | 'lower' | 'ti
   return 'tie'
 }
 
-export function determineManoWinner(cards: { playerId: string; card: Card }[]): string | null {
+export function determineManoWinner(cards: { playerId: string; card: Card }[]): 'tie' | string | null {
   if (cards.length === 0) return null
 
   let winner = cards[0]
+  let isTie = false
   for (let i = 1; i < cards.length; i++) {
     const result = compareCards(winner.card, cards[i].card)
     if (result === 'lower') {
       winner = cards[i]
+      isTie = false
+    } else if (result === 'tie') {
+      isTie = true
     }
   }
 
-  return winner.playerId
+  return isTie ? 'tie' : winner.playerId
 }
 
 export function getTrucoPoints(level: number): number {
   switch (level) {
-    case 1: return 1
-    case 2: return 2
-    case 3: return 3
-    default: return 1
+    case 1: return 2 // Truco = 2 points
+    case 2: return 3 // Retruco = 3 points
+    case 3: return 4 // Vale cuatro = 4 points
+    default: return 1 // Not accepted = 1 point
   }
 }
 
 export function getEnvidoPoints(level: number): number {
   switch (level) {
-    case 1: return 2
-    case 2: return 4
-    case 3: return 5
-    default: return 2
+    case 1: return 2 // Envido
+    case 2: return 4 // Real Envido or Envido Envido (simplified)
+    case 3: return 5 // Falta Envido (simplified for now, usually it's points left to win)
+    default: return 1 // Not accepted = 1
   }
 }
 
 export function getFlorPoints(level: number): number {
   switch (level) {
-    case 1: return 3
-    case 2: return 6
+    case 1: return 3 // Flor
+    case 2: return 6 // Contra Flor
     default: return 3
   }
 }

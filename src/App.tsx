@@ -7,6 +7,7 @@ import Register from './pages/auth/Register'
 import Lobby from './pages/lobby/Lobby'
 import CreateTable from './pages/lobby/CreateTable'
 import Table from './pages/table/Table'
+import GameTable from './pages/game/GameTable'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
@@ -70,6 +71,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Table />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="game"
+          element={
+            <ProtectedRoute>
+              <GameTable />
             </ProtectedRoute>
           }
         />
