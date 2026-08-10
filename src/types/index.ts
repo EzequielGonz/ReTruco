@@ -47,16 +47,20 @@ export interface GameState {
   preBidPlayerIndex: number
   trucoLevel: 0 | 1 | 2 | 3
   envidoLevel: 0 | 1 | 2 | 3
-  florLevel: 0 | 1 | 2
-  // Who originally called truco/envido/flor (to show correct modal text)
+  // Points at stake for the envido if accepted (accumulates across escalations)
+  envidoAccumulated: number
+  // Último canto de envido (Envido repetido = "doble envido", 4 pts querido)
+  envidoLastCall: 'envido' | 'real' | 'falta' | null
+  // Puntos que recibe el que cantó si el rival dice "no quiero"
+  envidoNoQuiero: number
+  // Who originally called truco/envido (to show correct modal text)
   trucoCaller: string | null
   envidoCaller: string | null
-  florCaller: string | null
   // Whether envido has been resolved already this hand
   envidoResolved: boolean
   // Number of tricks played this hand (to block envido after 1st trick)
   tricksPlayedThisHand: number
-  gamePhase: 'truco' | 'envido' | 'envido_points' | 'flor' | 'playing' | 'finished'
+  gamePhase: 'truco' | 'envido' | 'envido_points' | 'playing' | 'finished'
   envidoPointsCall?: { playerId: string; points: number }
   // Toast shown when bot responds to a bid (quiero/no quiero)
   botToast?: { text: string; color: string; id: string }

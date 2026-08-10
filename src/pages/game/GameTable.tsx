@@ -54,7 +54,6 @@ function PhaseBadge({ phase, trucoLevel }: { phase: string; trucoLevel: number }
     truco:         { label: '⚔️ ' + (['','Truco','Retruco','¡Vale Cuatro!'][trucoLevel] || 'Truco'), color: '#f59e0b' },
     envido:        { label: '🟢 Envido',         color: '#60a5fa' },
     envido_points: { label: '🔢 Puntos Envido',  color: '#38bdf8' },
-    flor:          { label: '🌸 Flor',           color: '#c084fc' },
     finished:      { label: '🏆 Terminado',      color: '#d4af37' },
   }
   const c = cfg[phase] ?? cfg.playing
@@ -116,20 +115,14 @@ function ResultModal({ winner, humanId, humanPts, botPts, onNewGame }: {
   )
 }
 
-// ── Bid modal (Truco / Envido / Flor challenge) ────────────────
-function BidModal({ type, level, callerName, myEnvidoPoints, onAccept, onReject, onRaise, canRaise }: {
-  type: 'truco'|'envido'|'flor'; level: number; callerName: string; myEnvidoPoints?: number
+// ── Bid modal (Truco challenge) ────────────────────────────────
+function BidModal({ level, callerName, onAccept, onReject, onRaise, canRaise }: {
+  level: number; callerName: string
   onAccept: ()=>void; onReject: ()=>void; onRaise?: ()=>void; canRaise?: boolean
 }) {
-  const labels: Record<string,string[]> = {
-    truco:  ['','Truco','Retruco','¡Vale Cuatro!'],
-    envido: ['','Envido','Real Envido','Falta Envido'],
-    flor:   ['','Flor','Contra Flor'],
-  }
-  const colors: Record<string,string> = { truco:'#f59e0b', envido:'#60a5fa', flor:'#c084fc' }
-  const icons = { truco:'⚔️', envido:'🃏', flor:'🌸' }
-  const label = labels[type]?.[level] || labels[type]?.[1] || ''
-  const color = colors[type] || '#d4af37'
+  const labels = ['', 'Truco', 'Retruco', '¡Vale Cuatro!']
+  const color = '#f59e0b'
+  const label = labels[level] || 'Truco'
   return (
     <motion.div initial={{ opacity:0, scale:0.88, y:16 }} animate={{ opacity:1, scale:1, y:0 }}
       exit={{ opacity:0, scale:0.88, y:16 }}
@@ -140,18 +133,13 @@ function BidModal({ type, level, callerName, myEnvidoPoints, onAccept, onReject,
       <div className="absolute inset-0 pointer-events-none"
         style={{ background:`radial-gradient(ellipse at center,${color}0a 0%,transparent 70%)` }} />
       <motion.div animate={{ scale:[1,1.1,1] }} transition={{ duration:0.7, repeat:Infinity, repeatDelay:1.2 }}
-        className="text-3xl mb-1 relative z-10">{icons[type]}</motion.div>
+        className="text-3xl mb-1 relative z-10">⚔️</motion.div>
       <p className="text-xs font-bold tracking-widest mb-0.5 relative z-10"
         style={{ color:`${color}aa`, letterSpacing:'0.18em' }}>
         {callerName.toUpperCase()} CANTÓ
       </p>
       <h3 className="text-xl font-bold mb-1 relative z-10"
         style={{ fontFamily:'Playfair Display,serif', color }}>¡{label}!</h3>
-      {type === 'envido' && myEnvidoPoints !== undefined && (
-        <p className="text-xs mb-2 relative z-10" style={{ color:'var(--color-text-muted)' }}>
-          Tu envido: <strong style={{ color:'#60a5fa' }}>{myEnvidoPoints}</strong>
-        </p>
-      )}
       <div className="flex flex-col gap-1.5 relative z-10 mt-3">
         <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
           onClick={onAccept} className="btn py-2.5 text-sm font-bold"
@@ -162,7 +150,95 @@ function BidModal({ type, level, callerName, myEnvidoPoints, onAccept, onReject,
           <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
             onClick={onRaise} className="btn py-2.5 text-sm"
             style={{ background:'rgba(212,175,55,0.1)', color:'var(--color-gold)', border:'1px solid rgba(212,175,55,0.35)' }}>
-            <ChevronUp className="w-3.5 h-3.5" />{labels[type]?.[level+1] || 'Subir'}
+            <ChevronUp className="w-3.5 h-3.5" />{labels[level+1] || 'Subir'}
+          </motion.button>
+        )}
+        <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
+          onClick={onReject} className="btn btn-danger py-2.5 text-sm">
+          <XCircle className="w-3.5 h-3.5" />¡No Quiero!
+        </motion.button>
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Envido bid modal (permite subir con Envido repetido / Real / Falta) ──
+function EnvidoBidModal({ level, lastCall, acumulado, callerName, myEnvidoPoints, onAccept, onReject, onRaise }: {
+  level: number
+  lastCall: 'envido' | 'real' | 'falta' | null
+  acumulado: number
+  callerName: string
+  myEnvidoPoints?: number
+  onAccept: ()=>void
+  onReject: ()=>void
+  onRaise: (type: 'envido' | 'real' | 'falta')=>void
+}) {
+  const color = '#60a5fa'
+  const title = level === 3 || lastCall === 'falta' ? 'Falta Envido'
+    : lastCall === 'real' ? 'Real Envido'
+    : 'Envido'
+  // Escaladas válidas según el canto en curso:
+  //  Envido → Envido (doble, +2); Real Envido (+3); Falta Envido (el resto)
+  const canDoble = level === 1 && lastCall === 'envido'
+  const canReal = level < 3 && lastCall !== 'real'
+  const canFalta = level < 3
+  return (
+    <motion.div initial={{ opacity:0, scale:0.88, y:16 }} animate={{ opacity:1, scale:1, y:0 }}
+      exit={{ opacity:0, scale:0.88, y:16 }}
+      transition={{ type:'spring', stiffness:320, damping:26 }}
+      className="rounded-2xl p-5 text-center relative overflow-hidden w-full max-w-xs mx-auto"
+      style={{ background:'rgba(8,20,13,0.97)', border:`2px solid ${color}55`,
+               boxShadow:`0 0 40px ${color}22, 0 20px 50px rgba(0,0,0,0.7)` }}>
+      <div className="absolute inset-0 pointer-events-none"
+        style={{ background:`radial-gradient(ellipse at center,${color}0a 0%,transparent 70%)` }} />
+      <motion.div animate={{ scale:[1,1.1,1] }} transition={{ duration:0.7, repeat:Infinity, repeatDelay:1.2 }}
+        className="text-3xl mb-1 relative z-10">🃏</motion.div>
+      <p className="text-xs font-bold tracking-widest mb-0.5 relative z-10"
+        style={{ color:`${color}aa`, letterSpacing:'0.18em' }}>
+        {callerName.toUpperCase()} CANTÓ
+      </p>
+      <h3 className="text-xl font-bold mb-1 relative z-10"
+        style={{ fontFamily:'Playfair Display,serif', color }}>¡{title}!</h3>
+      {acumulado > 0 && (
+        <p className="text-xs mb-1 relative z-10" style={{ color:'var(--color-gold-muted)' }}>
+          En juego: <strong style={{ color:'var(--color-gold)' }}>{acumulado} pts</strong>
+        </p>
+      )}
+      {level === 3 && (
+        <p className="text-xs mb-1 relative z-10" style={{ color:'var(--color-gold-muted)' }}>
+          En juego: <strong style={{ color:'var(--color-gold)' }}>el resto</strong>
+        </p>
+      )}
+      {myEnvidoPoints !== undefined && (
+        <p className="text-xs mb-2 relative z-10" style={{ color:'var(--color-text-muted)' }}>
+          Tu envido: <strong style={{ color }}>{myEnvidoPoints}</strong>
+        </p>
+      )}
+      <div className="flex flex-col gap-1.5 relative z-10 mt-3">
+        <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
+          onClick={onAccept} className="btn py-2.5 text-sm font-bold"
+          style={{ background:`linear-gradient(135deg,${color}44,${color}18)`, color, border:`1px solid ${color}55` }}>
+          <CheckCircle className="w-3.5 h-3.5" />¡Quiero!
+        </motion.button>
+        {canDoble && (
+          <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
+            onClick={() => onRaise('envido')} className="btn py-2.5 text-sm"
+            style={{ background:'rgba(96,165,250,0.12)', color:'#60a5fa', border:'1px solid rgba(96,165,250,0.4)' }}>
+            <ChevronUp className="w-3.5 h-3.5" />¡Envido! (doble)
+          </motion.button>
+        )}
+        {canReal && (
+          <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
+            onClick={() => onRaise('real')} className="btn py-2.5 text-sm"
+            style={{ background:'rgba(212,175,55,0.1)', color:'var(--color-gold)', border:'1px solid rgba(212,175,55,0.35)' }}>
+            <ChevronUp className="w-3.5 h-3.5" />Real Envido
+          </motion.button>
+        )}
+        {canFalta && (
+          <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
+            onClick={() => onRaise('falta')} className="btn py-2.5 text-sm"
+            style={{ background:'rgba(192,132,252,0.12)', color:'#c084fc', border:'1px solid rgba(192,132,252,0.4)' }}>
+            <ChevronUp className="w-3.5 h-3.5" />Falta Envido
           </motion.button>
         )}
         <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
@@ -229,7 +305,6 @@ export default function GameTable() {
     gameState, isPlaying, isDealing, finishDealing, clearBotToast,
     playCard, callTruco, acceptTruco, rejectTruco,
     callEnvido, acceptEnvido, rejectEnvido, announceEnvidoPoints,
-    callFlor, acceptFlor, rejectFlor,
     goToDeck, botPlay, resetGame,
   } = useGameStore()
 
@@ -350,25 +425,25 @@ export default function GameTable() {
   const botPts    = gameState.puntos[botPlayer?.userId    || ''] || 0
   const trucoCaller  = gameState.trucoCaller
   const envidoCaller = gameState.envidoCaller
-  const florCaller   = gameState.florCaller
   const callerName = (id: string | null) =>
     id ? (gameState.players.find((p) => p.userId === id)?.username ?? 'Rival') : 'Rival'
 
   const humanCalledTruco  = trucoCaller  === humanPlayer?.userId
   const humanCalledEnvido = envidoCaller === humanPlayer?.userId
-  const humanCalledFlor   = florCaller   === humanPlayer?.userId
 
   const showTrucoModal   = isPhase('truco')         && isMyTurn && !humanCalledTruco
   const showEnvidoModal  = isPhase('envido')         && isMyTurn && !humanCalledEnvido
-  const showFlorModal    = isPhase('flor')           && isMyTurn && !humanCalledFlor
   const showEnvidoPts    = isPhase('envido_points')  && isMyTurn
   const isFirstAnnouncer = showEnvidoPts && !gameState.envidoPointsCall
 
   const canCallTruco      = isPhase('playing') && isMyTurn && gameState.trucoLevel === 0
   const canCallRetruco    = isPhase('playing') && isMyTurn && gameState.trucoLevel === 1 && !humanCalledTruco
   const canCallValeCuatro = isPhase('playing') && isMyTurn && gameState.trucoLevel === 2 && !humanCalledTruco
+  // El envido solo se puede cantar durante la primera baza (0 o 1 carta en mesa)
   const canCallEnvido     = isPhase('playing') && isMyTurn && gameState.envidoLevel === 0
-                            && !gameState.envidoResolved && gameState.tricksPlayedThisHand === 0
+                            && !gameState.envidoResolved
+                            && gameState.tricksPlayedThisHand === 0
+                            && gameState.currentManoIndex === 0
   const canGoToDeck       = isPhase('playing') && isMyTurn
   const showActionBtns    = isPhase('playing') && isMyTurn
     && (canCallTruco || canCallRetruco || canCallValeCuatro || canCallEnvido || canGoToDeck)
@@ -581,31 +656,26 @@ export default function GameTable() {
 
               {/* Bid & envido-points modals — overlay in center */}
               <AnimatePresence>
-                {(showTrucoModal || showEnvidoModal || showFlorModal || showEnvidoPts) && (
+                {(showTrucoModal || showEnvidoModal || showEnvidoPts) && (
                   <motion.div
                     initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
                     className="absolute inset-0 flex items-center justify-center"
                     style={{ background:'rgba(6,16,10,0.75)', backdropFilter:'blur(6px)', borderRadius:16, zIndex:10 }}>
                     {showTrucoModal && (
-                      <BidModal type="truco" level={gameState.trucoLevel} callerName={callerName(trucoCaller)}
+                      <BidModal level={gameState.trucoLevel} callerName={callerName(trucoCaller)}
                         onAccept={() => acceptTruco(humanPlayer!.userId)}
                         onReject={() => rejectTruco(humanPlayer!.userId)}
                         onRaise={gameState.trucoLevel < 3 ? () => callTruco(humanPlayer!.userId, (gameState.trucoLevel+1) as 1|2|3) : undefined}
                         canRaise={gameState.trucoLevel < 3} />
                     )}
                     {showEnvidoModal && (
-                      <BidModal type="envido" level={gameState.envidoLevel} callerName={callerName(envidoCaller)}
+                      <EnvidoBidModal level={gameState.envidoLevel} lastCall={gameState.envidoLastCall}
+                        acumulado={gameState.envidoAccumulated}
+                        callerName={callerName(envidoCaller)}
                         myEnvidoPoints={humanEnvido.value}
                         onAccept={() => acceptEnvido(humanPlayer!.userId)}
                         onReject={() => rejectEnvido(humanPlayer!.userId)}
-                        onRaise={gameState.envidoLevel < 3 ? () => callEnvido(humanPlayer!.userId, (gameState.envidoLevel+1) as 1|2|3) : undefined}
-                        canRaise={gameState.envidoLevel < 3} />
-                    )}
-                    {showFlorModal && (
-                      <BidModal type="flor" level={gameState.florLevel} callerName={callerName(florCaller)}
-                        onAccept={() => acceptFlor(humanPlayer!.userId)}
-                        onReject={() => rejectFlor(humanPlayer!.userId)}
-                        canRaise={false} />
+                        onRaise={(type) => callEnvido(humanPlayer!.userId, type)} />
                     )}
                     {showEnvidoPts && (
                       <EnvidoPointsModal myPoints={humanEnvido.value}
@@ -654,19 +724,19 @@ export default function GameTable() {
                     {canCallEnvido && (
                       <>
                         <motion.button whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
-                          onClick={() => callEnvido(humanPlayer!.userId, 1)}
+                          onClick={() => callEnvido(humanPlayer!.userId, 'envido')}
                           className="btn py-2 px-3 text-xs flex items-center gap-1"
                           style={{ background:'rgba(96,165,250,0.15)', border:'1px solid rgba(96,165,250,0.4)', color:'#60a5fa' }}>
                           <Zap className="w-3 h-3" />Envido
                         </motion.button>
                         <motion.button whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
-                          onClick={() => callEnvido(humanPlayer!.userId, 2)}
+                          onClick={() => callEnvido(humanPlayer!.userId, 'real')}
                           className="btn py-2 px-3 text-xs flex items-center gap-1"
                           style={{ background:'rgba(96,165,250,0.18)', border:'1px solid rgba(96,165,250,0.5)', color:'#93c5fd' }}>
                           <Star className="w-3 h-3" />Real
                         </motion.button>
                         <motion.button whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
-                          onClick={() => callEnvido(humanPlayer!.userId, 3)}
+                          onClick={() => callEnvido(humanPlayer!.userId, 'falta')}
                           className="btn py-2 px-3 text-xs flex items-center gap-1"
                           style={{ background:'rgba(192,132,252,0.15)', border:'1px solid rgba(192,132,252,0.4)', color:'#c084fc' }}>
                           <Shield className="w-3 h-3" />Falta
@@ -756,7 +826,11 @@ export default function GameTable() {
               {[
                 { label:'Baza', value:`${gameState.currentManoIndex+1}/3` },
                 { label:'Truco', value:['—','Truco','Retruco','Vale4'][gameState.trucoLevel] },
-                { label:'Envido', value: gameState.envidoResolved ? '✓' : ['—','Envido','Real','Falta'][gameState.envidoLevel] },
+                { label:'Envido', value: gameState.envidoResolved ? '✓'
+                  : gameState.envidoLevel === 3 ? 'Falta'
+                  : gameState.envidoLastCall === 'real' ? 'Real'
+                  : gameState.envidoLevel === 2 ? 'Envido x2'
+                  : gameState.envidoLevel === 1 ? 'Envido' : '—' },
               ].map(({ label, value }) => (
                 <div key={label} className="flex justify-between items-center gap-1">
                   <span style={{ color:'var(--color-text-muted)' }}>{label}</span>

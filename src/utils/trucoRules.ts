@@ -192,24 +192,3 @@ export function getEnvidoPoints(level: number, targetPoints?: number, losingScor
   }
 }
 
-// Points when "no quiero" is said — always 1 less than the called level
-export function getEnvidoNoQuieroPoints(level: number): number {
-  // No quiero: caller gets points = level-1 (but at least 1)
-  // Envido no querido = 1, Real Envido no querido = 2 (if envido was called first) or 1
-  // For simplicity per official rules: no quiero always gives 1pt to caller at level 1,
-  // and the value of the previous level accepted for higher levels
-  switch (level) {
-    case 1: return 1  // No quiero envido = 1
-    case 2: return 2  // No quiero real envido (if envido was accepted = 2+1=3; if called alone = 2)
-    case 3: return 3  // No quiero falta envido
-    default: return 1
-  }
-}
-
-export function getFlorPoints(level: number): number {
-  switch (level) {
-    case 1: return 3 // Flor
-    case 2: return 6 // Contra Flor
-    default: return 3
-  }
-}

@@ -3,12 +3,11 @@ import type { Card, Player, GameState, GameMessage } from '../types'
 import {
   createDeck, shuffleDeck, dealCards,
   calculateEnvido, hasFlor, determineManoWinner,
-  getCardPower, getTrucoPoints, getEnvidoPoints, getEnvidoNoQuieroPoints, getFlorPoints,
+  getCardPower, getTrucoPoints, getEnvidoPoints,
 } from '../utils/trucoRules'
 
 type TrucoLevel = 0 | 1 | 2 | 3
 type EnvidoLevel = 0 | 1 | 2 | 3
-type FlorLevel = 0 | 1 | 2
 
 interface GameStoreState {
   gameState: GameState | null
@@ -19,13 +18,10 @@ interface GameStoreState {
   callTruco: (playerId: string, level: TrucoLevel) => void
   acceptTruco: (playerId: string) => void
   rejectTruco: (playerId: string) => void
-  callEnvido: (playerId: string, level: EnvidoLevel) => void
+  callEnvido: (playerId: string, type: 'envido' | 'real' | 'falta') => void
   acceptEnvido: (playerId: string) => void
   rejectEnvido: (playerId: string) => void
   announceEnvidoPoints: (playerId: string, isSonBuenas: boolean) => void
-  callFlor: (playerId: string, level: FlorLevel) => void
-  acceptFlor: (playerId: string) => void
-  rejectFlor: (playerId: string) => void
   goToDeck: (playerId: string) => void
   resetGame: () => void
   botPlay: () => void
@@ -55,12 +51,29 @@ function buildHands(players: Player[]) {
   }
 }
 
+/**
+ * La Flor es automática: si al repartir un jugador tiene 3 cartas del mismo palo,
+ * se canta sola y suma 3 puntos. No hay "quiero / no quiero" ni contraflor.
+ */
+function awardFlorPoints(
+  players: Player[],
+  hands: Card[][],
+  puntos: Record<string, number>,
+  messages: GameMessage[],
+) {
+  players.forEach((p, i) => {
+    if (hasFlor(hands[i])) {
+      puntos[p.userId] = (puntos[p.userId] || 0) + 3
+      messages.push(msg('success', `🌸 ¡${p.username} tiene Flor! +3 pts`))
+    }
+  })
+}
+
 function createInitialState(players: Player[], targetPoints: number): GameState {
   const { deck, hands } = buildHands(players)
   const messages: GameMessage[] = []
-  players.forEach((p, i) => {
-    if (hasFlor(hands[i])) messages.push(msg('info', `¡${p.username} tiene Flor!`))
-  })
+  const puntos: Record<string, number> = Object.fromEntries(players.map((p) => [p.userId, 0]))
+  awardFlorPoints(players, hands, puntos, messages)
   return {
     tableId: crypto.randomUUID(),
     players, deck, hands,
@@ -68,14 +81,15 @@ function createInitialState(players: Player[], targetPoints: number): GameState 
     currentManoIndex: 0,
     currentPlayerIndex: 0,       // index of "mano" player (leads first trick)
     preBidPlayerIndex: 0,
-    trucoLevel: 0, envidoLevel: 0, florLevel: 0,
-    trucoCaller: null, envidoCaller: null, florCaller: null,
+    trucoLevel: 0, envidoLevel: 0, envidoAccumulated: 0,
+    envidoLastCall: null, envidoNoQuiero: 0,
+    trucoCaller: null, envidoCaller: null,
     envidoResolved: false, tricksPlayedThisHand: 0,
     gamePhase: 'playing',
     envidoPointsCall: undefined,
     botToast: undefined,
     currentTurn: players[0].userId,
-    puntos: Object.fromEntries(players.map((p) => [p.userId, 0])),
+    puntos,
     targetPoints, winner: null, messages,
   }
 }
@@ -83,23 +97,23 @@ function createInitialState(players: Player[], targetPoints: number): GameState 
 function dealNewHand(gs: GameState, leaderIndex: number): GameState {
   const { deck, hands } = buildHands(gs.players)
   const messages: GameMessage[] = [...gs.messages, msg('info', '── Nueva mano ──')]
-  gs.players.forEach((p, i) => {
-    if (hasFlor(hands[i])) messages.push(msg('info', `¡${p.username} tiene Flor!`))
-  })
+  const puntos = { ...gs.puntos }
+  awardFlorPoints(gs.players, hands, puntos, messages)
+  const winner = gs.players.find((p) => (puntos[p.userId] || 0) >= gs.targetPoints)?.userId ?? null
   const next = leaderIndex >= 0 && leaderIndex < gs.players.length ? leaderIndex : 0
   return {
-    ...gs, deck, hands, messages,
+    ...gs, deck, hands, messages, puntos, winner,
     manos: freshManos(gs.players),
     currentManoIndex: 0,
     currentPlayerIndex: next, preBidPlayerIndex: next,
-    trucoLevel: 0, envidoLevel: 0, florLevel: 0,
-    trucoCaller: null, envidoCaller: null, florCaller: null,
+    trucoLevel: 0, envidoLevel: 0, envidoAccumulated: 0,
+    envidoLastCall: null, envidoNoQuiero: 0,
+    trucoCaller: null, envidoCaller: null,
     envidoResolved: false, tricksPlayedThisHand: 0,
-    gamePhase: 'playing',
+    gamePhase: winner ? 'finished' : 'playing',
     envidoPointsCall: undefined,
     botToast: undefined,
     currentTurn: gs.players[next].userId,
-    winner: null,
   }
 }
 
@@ -167,6 +181,21 @@ function evaluateHandWinner(
   }
 
   return null
+}
+
+/**
+ * Fuerza de una mano para las decisiones de la IA.
+ * byStrength: ordenada de más fuerte a más débil (power menor = más fuerte).
+ * strongCount: cartas "top" (anchos, 7 de espada/oro, 3 y 2 → power <= 6).
+ */
+function handStrength(hand: Card[]) {
+  const byStrength = [...hand].sort((a, b) => a.power - b.power)
+  return {
+    best: byStrength[0]?.power ?? 99,
+    strongCount: hand.filter((c) => c.power <= 6).length,
+    byStrength,
+    byWeakness: [...hand].sort((a, b) => b.power - a.power),
+  }
 }
 
 export const useGameStore = create<GameStoreState>((set, get) => ({
@@ -251,7 +280,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           if (!winner) {
             // Deal new hand — winner of this hand leads next
             const winnerPi = gs.players.findIndex((p) => p.userId === handWinnerId)
-            return { gameState: dealNewHand({ ...gs, hands: newHands, manos: newManos, puntos, messages: msgs }, winnerPi) }
+            const nextState = dealNewHand({ ...gs, hands: newHands, manos: newManos, puntos, messages: msgs }, winnerPi)
+            return { gameState: nextState, isDealing: !nextState.winner }
           }
           // Game won
           return {
@@ -337,39 +367,81 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         puntos[callerId] = (puntos[callerId] || 0) + pts
         const callerName = gs.players.find((p) => p.userId === callerId)?.username
         const gw = puntos[callerId] >= gs.targetPoints ? callerId : null
-        const resumeI = gs.preBidPlayerIndex
-        return {
-          gameState: {
-            ...gs, puntos, winner: gw,
-            gamePhase: gw ? 'finished' : 'playing',
-            currentTurn: gs.players[resumeI].userId, currentPlayerIndex: resumeI,
-            botToast: acceptorIsBot ? toast('¡No Quiero! 🚫', '#ef4444') : gs.botToast,
-            messages: [...gs.messages, msg('error',
-              `${gs.players.find((p) => p.userId === playerId)?.username}: ¡No Quiero! ${callerName} gana ${pts} pt${pts !== 1 ? 's' : ''}.`,
-              playerId)],
-          },
+        const logMsg = msg('error',
+          `${gs.players.find((p) => p.userId === playerId)?.username}: ¡No Quiero! ${callerName} gana ${pts} pt${pts !== 1 ? 's' : ''}. La ronda termina.`,
+          playerId)
+        if (gw) {
+          return {
+            gameState: {
+              ...gs, puntos, winner: gw, gamePhase: 'finished',
+              botToast: acceptorIsBot ? toast('¡No Quiero! 🚫', '#ef4444') : gs.botToast,
+              messages: [...gs.messages, logMsg],
+            },
+          }
         }
+        // Al no querer el truco, la RONDA TERMINA: se reparte mano nueva
+        // liderada por quien cobró los puntos
+        const callerPi = gs.players.findIndex((p) => p.userId === callerId)
+        const nextState = dealNewHand({ ...gs, puntos, messages: [...gs.messages, logMsg] }, callerPi)
+        return { gameState: nextState, isDealing: !nextState.winner }
       }
       return state
     })
   },
 
-  callEnvido: (playerId, level) => {
+  callEnvido: (playerId, type) => {
     set((state) => {
       if (!state.gameState) return state
       const gs = state.gameState
-      if (gs.envidoResolved || gs.tricksPlayedThisHand > 0) return state
+      // El envido solo se puede cantar durante la PRIMERA baza y antes de que
+      // se juegue la segunda carta (regla estándar: permitido con 0 o 1 carta
+      // en mesa, prohibido una vez que ambos tiraron / la 1ª baza se completó).
+      if (gs.envidoResolved || gs.tricksPlayedThisHand > 0 || gs.currentManoIndex > 0) return state
       const ci = gs.players.findIndex((p) => p.userId === playerId)
       const ri = (ci + 1) % gs.players.length
-      const lvl = ['', 'Envido', 'Real Envido', 'Falta Envido'][level]
+      const isFirst = gs.envidoLevel === 0
+
+      // Montos (querido / no querido) según el canto:
+      //  Envido:           2 querido, 1 no querido
+      //  Envido repetido:  +2 (doble = 4 querido), 2 no querido
+      //  Real Envido:      +3, 1 no querido
+      //  Falta Envido:     resto (se calcula al resolver), 1 no querido
+      let lvl: EnvidoLevel
+      let acc: number
+      let noQuiero: number
+      let label: string
+      if (type === 'falta') {
+        lvl = 3
+        acc = 0
+        noQuiero = 1
+        label = 'Falta Envido'
+      } else if (type === 'real') {
+        lvl = 2
+        acc = (isFirst ? 0 : gs.envidoAccumulated) + 3
+        noQuiero = 1
+        label = 'Real Envido'
+      } else if (isFirst) {
+        lvl = 1
+        acc = 2
+        noQuiero = 1
+        label = 'Envido'
+      } else {
+        // Envido repetido (doble envido)
+        lvl = Math.max(gs.envidoLevel, 2) as EnvidoLevel
+        acc = gs.envidoAccumulated + 2
+        noQuiero = 2
+        label = 'Envido'
+      }
+
       return {
         gameState: {
           ...gs,
-          envidoLevel: level, envidoCaller: playerId, gamePhase: 'envido',
+          envidoLevel: lvl, envidoCaller: playerId, gamePhase: 'envido',
+          envidoAccumulated: acc, envidoLastCall: type, envidoNoQuiero: noQuiero,
           currentTurn: gs.players[ri].userId, currentPlayerIndex: ri,
           preBidPlayerIndex: ci,
           botToast: undefined,
-          messages: [...gs.messages, msg('warning', `¡${gs.players[ci]?.username} canta ${lvl}!`, playerId)],
+          messages: [...gs.messages, msg('warning', `¡${gs.players[ci]?.username} canta ${label}!`, playerId)],
         },
       }
     })
@@ -403,7 +475,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const puntos = { ...gs.puntos }
       const acceptorIsBot = gs.players.find((p) => p.userId === playerId)?.isBot
       if (callerId) {
-        const pts = getEnvidoNoQuieroPoints(gs.envidoLevel)
+        // No quiero: el que cantó se lleva el monto "en pie" (envido=1,
+        // doble envido=2, real=1, falta=1), calculado al momento del canto
+        const pts = gs.envidoNoQuiero || 1
         puntos[callerId] = (puntos[callerId] || 0) + pts
         const callerName = gs.players.find((p) => p.userId === callerId)?.username
         const gw = puntos[callerId] >= gs.targetPoints ? callerId : null
@@ -444,11 +518,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           : `${gs.players[pi].username}: "Tengo ${myPts}" — ${myPts >= callerPts ? '¡Gana!' : 'Son buenas las del rival'}`
 
         const puntos = { ...gs.puntos }
-        // Falta envido: points = target - loser's current score
-        const loserScore = puntos[playerId === winnerId
-          ? (gs.envidoPointsCall.playerId)
-          : playerId] || 0
-        const pts = getEnvidoPoints(gs.envidoLevel || 1, gs.targetPoints, loserScore)
+        // Falta envido: vale lo que le falta al que canta para llegar al objetivo
+        // (si el cantor va ganando, eso es justo lo que le falta al líder; en ambos
+        // casos es target - puntos del cantor). El resto de los niveles usa el monto
+        // acumulado por las escaladas (Envido=2, Real Envido=3, y se suman).
+        const callerScore = puntos[gs.envidoCaller || ''] || 0
+        const pts = gs.envidoLastCall === 'falta'
+          ? getEnvidoPoints(3, gs.targetPoints, callerScore)
+          : gs.envidoAccumulated
         puntos[winnerId] = (puntos[winnerId] || 0) + pts
         const gw = puntos[winnerId] >= gs.targetPoints ? winnerId : null
         const resumeI = gs.preBidPlayerIndex
@@ -480,71 +557,6 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     })
   },
 
-  callFlor: (playerId, level) => {
-    set((state) => {
-      if (!state.gameState) return state
-      const gs = state.gameState
-      const ci = gs.players.findIndex((p) => p.userId === playerId)
-      const ri = (ci + 1) % gs.players.length
-      const lvl = level === 1 ? 'Flor' : 'Contra Flor'
-      return {
-        gameState: {
-          ...gs, florLevel: level, florCaller: playerId, gamePhase: 'flor',
-          currentTurn: gs.players[ri].userId, currentPlayerIndex: ri,
-          preBidPlayerIndex: ci, botToast: undefined,
-          messages: [...gs.messages, msg('warning', `¡${gs.players[ci]?.username} canta ${lvl}!`, playerId)],
-        },
-      }
-    })
-  },
-
-  acceptFlor: (playerId) => {
-    set((state) => {
-      if (!state.gameState) return state
-      const gs = state.gameState
-      const pi = gs.players.findIndex((p) => p.userId === playerId)
-      const oi = (pi + 1) % gs.players.length
-      const hasMyFlor = hasFlor(gs.hands[pi])
-      const winnerId = hasMyFlor ? playerId : gs.players[oi].userId
-      const puntos = { ...gs.puntos }
-      const pts = getFlorPoints(gs.florLevel || 1)
-      puntos[winnerId] = (puntos[winnerId] || 0) + pts
-      const gw = puntos[winnerId] >= gs.targetPoints ? winnerId : null
-      const resumeI = gs.preBidPlayerIndex
-      return {
-        gameState: {
-          ...gs, puntos, winner: gw,
-          gamePhase: gw ? 'finished' : 'playing',
-          currentTurn: gs.players[resumeI].userId, currentPlayerIndex: resumeI,
-          messages: [...gs.messages, msg('success', `¡Flor aceptada! +${pts} pts`, playerId)],
-        },
-      }
-    })
-  },
-
-  rejectFlor: (playerId) => {
-    set((state) => {
-      if (!state.gameState) return state
-      const gs = state.gameState
-      const callerId = gs.florCaller
-      const puntos = { ...gs.puntos }
-      if (callerId) {
-        const pts = getFlorPoints(gs.florLevel || 1)
-        puntos[callerId] = (puntos[callerId] || 0) + pts
-      }
-      const gw = callerId && puntos[callerId] >= gs.targetPoints ? callerId : null
-      const resumeI = gs.preBidPlayerIndex
-      return {
-        gameState: {
-          ...gs, puntos, winner: gw,
-          gamePhase: gw ? 'finished' : 'playing',
-          currentTurn: gs.players[resumeI].userId, currentPlayerIndex: resumeI,
-          messages: [...gs.messages, msg('error', '¡No Quiero! Flor rechazada.', playerId)],
-        },
-      }
-    })
-  },
-
   goToDeck: (playerId) => {
     set((state) => {
       if (!state.gameState) return state
@@ -552,15 +564,23 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const name = gs.players.find((p) => p.userId === playerId)?.username || 'Jugador'
       const opp = gs.players.find((p) => p.userId !== playerId)
       const puntos = { ...gs.puntos }
-      if (opp) puntos[opp.userId] = (puntos[opp.userId] || 0) + 1
+      // El rival se lleva el valor actual de la mano (1 si no se cantó truco)
+      const pts = getTrucoPoints(gs.trucoLevel)
+      if (opp) puntos[opp.userId] = (puntos[opp.userId] || 0) + pts
       const gw = opp && puntos[opp.userId] >= gs.targetPoints ? opp.userId : null
-      return {
-        gameState: {
-          ...gs, puntos, winner: gw,
-          gamePhase: gw ? 'finished' : gs.gamePhase,
-          messages: [...gs.messages, msg('info', `${name} se fue al mazo.`, playerId)],
-        },
+      const logMsg = msg('info', `${name} se fue al mazo. ${opp?.username ?? ''} +${pts} pt${pts !== 1 ? 's' : ''}.`, playerId)
+      if (gw) {
+        return {
+          gameState: {
+            ...gs, puntos, winner: gw, gamePhase: 'finished',
+            messages: [...gs.messages, logMsg],
+          },
+        }
       }
+      // Se reparte una mano nueva, liderada por quien ganó los puntos
+      const oppPi = opp ? gs.players.findIndex((p) => p.userId === opp.userId) : 0
+      const nextState = dealNewHand({ ...gs, puntos, messages: [...gs.messages, logMsg] }, oppPi)
+      return { gameState: nextState, isDealing: !nextState.winner }
     })
   },
 
@@ -568,8 +588,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     const s = get()
     if (!s.gameState || !s.isPlaying || s.isDealing) return
 
-    // Guard: only schedule if the bot is actually the current player right now
+    // Guard: si la partida ya terminó no hay nada que jugar (evita loops de timers)
     const gs = s.gameState
+    if (gs.gamePhase === 'finished' || gs.winner) return
+
+    // Guard: only schedule if the bot is actually the current player right now
     const currentPlayer = gs.players.find((p) => p.userId === gs.currentTurn)
     if (!currentPlayer?.isBot) return
 
@@ -591,6 +614,10 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const hand = fgs.hands[bi]
       if (!hand || hand.length === 0) return
 
+      const humanId = fgs.players.find((p) => !p.isBot)?.userId ?? ''
+      const myScore = fgs.puntos[botId] || 0
+      const oppScore = fgs.puntos[humanId] || 0
+
       // ── envido_points: bot announces or responds ─────────
       if (fgs.gamePhase === 'envido_points') {
         const ev = calculateEnvido(hand)
@@ -601,135 +628,165 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           // Announcing first
           get().announceEnvidoPoints(botId, false)
         }
-        return
       }
 
       // ── envido: bot responds to human's envido call ──────
-      if (fgs.gamePhase === 'envido') {
+      else if (fgs.gamePhase === 'envido') {
         const ev = calculateEnvido(hand)
-        if (ev.value >= 27 && fgs.envidoLevel < 3 && Math.random() > 0.45) {
-          // Raise
-          get().callEnvido(botId, (fgs.envidoLevel + 1) as EnvidoLevel)
-        } else if (ev.value >= 20 && Math.random() > 0.35) {
+        const last = fgs.envidoLastCall
+        if (fgs.envidoLevel === 3) {
+          // Falta envido: el monto depende de cuánto le falta al que cantó
+          const callerScore = fgs.puntos[fgs.envidoCaller || ''] || 0
+          const stake = fgs.targetPoints - callerScore
+          if (ev.value >= 27 && Math.random() < 0.6) get().acceptEnvido(botId)
+          else if (stake <= 4 && ev.value >= 22 && Math.random() < 0.6) get().acceptEnvido(botId)
+          else get().rejectEnvido(botId)
+        } else if (fgs.envidoLevel === 1 && ev.value >= 27 && Math.random() < 0.5) {
+          // Envido → Real Envido (2+3=5)
+          get().callEnvido(botId, 'real')
+        } else if (fgs.envidoLevel === 1 && ev.value >= 24 && Math.random() < 0.4) {
+          // Envido → Envido repetido (doble, 2+2=4)
+          get().callEnvido(botId, 'envido')
+        } else if (fgs.envidoLevel === 2 && last === 'envido' && ev.value >= 28 && Math.random() < 0.5) {
+          // Doble → Real Envido (4+3=7)
+          get().callEnvido(botId, 'real')
+        } else if (fgs.envidoLevel === 2 && ev.value >= 28 && myScore <= oppScore && Math.random() < 0.4) {
+          // → Falta Envido (perdiendo o empatados)
+          get().callEnvido(botId, 'falta')
+        } else if (ev.value >= 20 && Math.random() < 0.7) {
           get().acceptEnvido(botId)
         } else {
           get().rejectEnvido(botId)
         }
-        // Do NOT schedule botPlay here — useEffect will fire on the turn/phase change
-        return
-      }
-
-      // ── flor: bot responds ───────────────────────────────
-      if (fgs.gamePhase === 'flor') {
-        if (hasFlor(hand) && Math.random() > 0.4) get().acceptFlor(botId)
-        else get().rejectFlor(botId)
-        return
       }
 
       // ── truco: bot responds to human's truco call ────────
-      if (fgs.gamePhase === 'truco') {
-        const strong = hand.filter((c) => c.power <= 6).length
+      else if (fgs.gamePhase === 'truco') {
+        const { best, strongCount } = handStrength(hand)
+        const botWins = fgs.manos.filter((m, i) => i < fgs.currentManoIndex && m.winner === botId).length
+        const humanWins = fgs.manos.filter((m, i) => i < fgs.currentManoIndex && m.winner === humanId).length
         const rnd = Math.random()
-        if (fgs.trucoLevel < 3 && strong >= 2 && rnd > 0.65) {
-          // Raise — turn goes to human; useEffect will NOT re-fire for bot
+        if (fgs.trucoLevel < 3 && strongCount >= 2 && best <= 4 && rnd < 0.5) {
+          // Mano muy fuerte: subir la apuesta
           get().callTruco(botId, (fgs.trucoLevel + 1) as TrucoLevel)
-        } else if (rnd > 0.3) {
+        } else if (strongCount >= 2 || botWins >= 1) {
+          // Mano fuerte o ya ganó una baza: aceptar casi siempre
+          get().acceptTruco(botId)
+        } else if (strongCount === 1) {
+          // Una carta fuerte: decisión 50/50
+          if (rnd < 0.5) get().acceptTruco(botId)
+          else get().rejectTruco(botId)
+        } else if (humanWins >= 1) {
+          // Sin cartas fuertes y el rival ya ganó una baza: rechazar
+          get().rejectTruco(botId)
+        } else if (rnd < 0.3) {
           get().acceptTruco(botId)
         } else {
           get().rejectTruco(botId)
         }
-        // Do NOT schedule botPlay here — useEffect handles it
-        return
       }
 
       // ── playing: bot's turn to play or call ─────────────
-      if (fgs.gamePhase === 'playing') {
+      else if (fgs.gamePhase === 'playing') {
         const ev = calculateEnvido(hand)
+        const { best, strongCount, byStrength, byWeakness } = handStrength(hand)
 
-        // Before first trick: maybe call envido
+        // Antes de la primera baza: quizá cantar envido (solo si aún se puede)
         if (
           !fgs.envidoResolved &&
           fgs.envidoLevel === 0 &&
           fgs.tricksPlayedThisHand === 0 &&
-          ev.value >= 20 &&
-          Math.random() > 0.5
+          ev.value >= 20
         ) {
-          const lvl: EnvidoLevel = ev.value >= 28 ? 3 : ev.value >= 24 ? 2 : 1
-          get().callEnvido(botId, lvl)
-          return
+          const prob = ev.value >= 28 ? 0.75 : ev.value >= 24 ? 0.55 : 0.3
+          let type: 'envido' | 'real' | 'falta' = 'envido'
+          // Falta envido solo conviene si vamos perdiendo o empatados (monto grande)
+          if (ev.value >= 28 && myScore <= oppScore) type = 'falta'
+          else if (ev.value >= 24) type = 'real'
+          if (Math.random() < prob) {
+            get().callEnvido(botId, type)
+            return
+          }
         }
 
-        // Maybe call Flor (before first trick)
-        if (hasFlor(hand) && fgs.florLevel === 0 && fgs.tricksPlayedThisHand === 0 && Math.random() > 0.6) {
-          get().callFlor(botId, 1)
-          return
+        // Quizá cantar Truco: depende de la fuerza de la mano y la posición
+        if (fgs.trucoLevel === 0) {
+          const botWins = fgs.manos.filter((m, i) => i < fgs.currentManoIndex && m.winner === botId).length
+          const closeToWin = myScore >= fgs.targetPoints - 4
+          let shouldCall = false
+          if (strongCount >= 2) shouldCall = Math.random() < 0.6        // dos cartas top
+          else if (best <= 4 && strongCount >= 1) shouldCall = Math.random() < 0.4  // tiene un ancho o 7 de espada
+          else if (botWins >= 1 && strongCount >= 1) shouldCall = Math.random() < 0.4  // ya ganó una baza
+          else if (closeToWin && strongCount >= 1) shouldCall = Math.random() < 0.4  // a punto de ganar la partida
+          if (shouldCall) {
+            get().callTruco(botId, 1)
+            return
+          }
         }
 
-        // Maybe call Truco (any time during playing)
-        if (fgs.trucoLevel === 0 && Math.random() > 0.65) {
-          get().callTruco(botId, 1)
-          return
-        }
-
-        // ── Card selection: smarter strategy ────────────────
-        // Sort by power ascending = strongest first (lower power # = stronger)
-        const byStrength = [...hand].sort((a, b) => a.power - b.power)  // [0]=strongest
-        const byWeakness = [...hand].sort((a, b) => b.power - a.power)  // [0]=weakest
-
+        // ── Card selection ─────────────────────────────────
         const curMano = fgs.manos[fgs.currentManoIndex]
         const playedSoFar = curMano.cards.filter((c) => c.played && c.card)
         const trickIndex = fgs.currentManoIndex  // 0=first trick, 1=second, 2=third
 
-        // Evaluate hand position: did bot already win a trick?
         const botWins = fgs.manos.filter((mn, i) => i < trickIndex && mn.winner === botId).length
-        const humanId = fgs.players.find((p) => !p.isBot)?.userId
         const humanWins = fgs.manos.filter((mn, i) => i < trickIndex && mn.winner === humanId).length
+
+        // Esta baza decide la mano si:
+        //  - es la 3ª (solo se llega a ella con 1-1), o
+        //  - es la 2ª y la 1ª fue parda ("1ª parda → decide la 2ª")
+        const firstTwoWinners = fgs.manos.slice(0, trickIndex).map((m) => m.winner)
+        const trickDecidesHand =
+          trickIndex === 2 ||
+          (trickIndex === 1 && firstTwoWinners[0] === 'tie')
 
         let cardToPlay: Card
 
         if (playedSoFar.length > 0) {
-          // Human already played — respond
+          // El humano ya jugó — responder
           const humanCard = playedSoFar.find((c) => c.playerId !== botId)?.card
           if (humanCard) {
-            // Find the weakest card that still beats human's card
             const winningCards = byWeakness.filter((c) => c.power < humanCard.power)
-
             if (winningCards.length > 0) {
-              if (botWins >= 1) {
-                // Already won one trick — use weakest possible winner (conserve strong cards)
-                cardToPlay = winningCards[0]  // weakest winner
-              } else {
-                // Need this trick — use weakest winner
-                cardToPlay = winningCards[0]
-              }
+              // Ganar la baza con la carta más débil que alcance (conserva las fuertes)
+              cardToPlay = winningCards[0]
             } else {
-              // Can't win this trick — throw weakest card (save strong ones)
+              // No puede ganar: tirar la más débil y guardar las fuertes
               cardToPlay = byWeakness[0]
             }
           } else {
             cardToPlay = byWeakness[0]
           }
+        } else if (trickDecidesHand) {
+          // La baza define la mano: jugar la carta más fuerte
+          cardToPlay = byStrength[0]
+        } else if (trickIndex === 0) {
+          // Primera baza: con mano muy fuerte largar la más débil (conserva el par
+          // de cartas top para las bazas 2 y 3); si no, una del medio
+          cardToPlay = strongCount >= 2 ? byWeakness[0] : byStrength[Math.min(1, byStrength.length - 1)]
+        } else if (humanWins >= 1) {
+          // El humano ya ganó una baza: no puede perder esta
+          cardToPlay = byStrength[0]
+        } else if (botWins >= 1) {
+          // Ya va ganando la mano: no arriesgar cartas fuertes
+          cardToPlay = byWeakness[0]
         } else {
-          // Bot plays first this trick
-          if (trickIndex === 0) {
-            // First trick: play a mid-strength card, save the best
-            const mid = Math.min(1, byStrength.length - 1)
-            cardToPlay = byStrength[mid]
-          } else if (botWins >= 1) {
-            // Already winning — play weakest to not waste strong cards
-            cardToPlay = byWeakness[0]
-          } else if (humanWins >= 1) {
-            // Human winning — play strongest to recover
-            cardToPlay = byStrength[0]
-          } else {
-            // Tied — play mid card
-            const mid = Math.min(1, byStrength.length - 1)
-            cardToPlay = byStrength[mid]
-          }
+          cardToPlay = byStrength[Math.min(1, byStrength.length - 1)]
         }
 
         get().playCard(botId, cardToPlay)
       }
+
+      // ── Chain: si el bot conservó el turno (ganó la baza como segundo y juega
+      //    primero la siguiente, o se repartió una mano nueva con el bot como mano),
+      //    el useEffect NO se vuelve a disparar porque currentTurn no cambió.
+      //    Por eso se re-encadena botPlay acá, con su propio delay.
+      const st = get()
+      if (!st.gameState || !st.isPlaying || st.isDealing) return
+      const stgs = st.gameState
+      if (stgs.gamePhase === 'finished' || stgs.winner) return
+      const tp = stgs.players.find((p) => p.userId === stgs.currentTurn)
+      if (tp?.isBot) get().botPlay()
     }, delay)
   },
 }))
