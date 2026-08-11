@@ -20,6 +20,7 @@ interface GameStoreState {
   acceptTruco: (playerId: string) => void
   rejectTruco: (playerId: string) => void
   callEnvido: (playerId: string, type: 'envido' | 'real' | 'falta') => void
+  callFlor: (playerId: string) => void
   acceptEnvido: (playerId: string) => void
   rejectEnvido: (playerId: string) => void
   announceEnvidoPoints: (playerId: string, isSonBuenas: boolean) => void
@@ -55,22 +56,11 @@ function buildHands(players: Player[]) {
 }
 
 /**
- * La Flor es automática: si al repartir un jugador tiene 3 cartas del mismo palo,
- * se canta sola y suma 3 puntos. No hay "quiero / no quiero" ni contraflor.
+ * True si algún jugador tiene flor en la mano. La flor bloquea el envido:
+ * no se puede cantar envido en una mano donde hay flor.
  */
-function awardFlorPoints(
-  players: Player[],
-  hands: Card[][],
-  puntos: Record<string, number>,
-  messages: GameMessage[],
-) {
-  players.forEach((p, i) => {
-    if (hasFlor(hands[i])) {
-      puntos[p.userId] = (puntos[p.userId] || 0) + 3
-      messages.push(msg('success', `🌸 ¡${p.username} tiene Flor! +3 pts`))
-      sayCall('¡Flor!', { excited: true })
-    }
-  })
+function hasFlorInPlay(gs: GameState): boolean {
+  return gs.players.some((_, i) => hasFlor(gs.hands[i]))
 }
 
 /**
@@ -85,7 +75,6 @@ function createInitialState(players: Player[], targetPoints: number): GameState 
   const { deck, hands } = buildHands(players)
   const messages: GameMessage[] = []
   const puntos: Record<string, number> = Object.fromEntries(players.map((p) => [p.userId, 0]))
-  awardFlorPoints(players, hands, puntos, messages)
   return {
     tableId: crypto.randomUUID(),
     players, deck, hands,
@@ -96,7 +85,7 @@ function createInitialState(players: Player[], targetPoints: number): GameState 
     trucoLevel: 0, envidoLevel: 0, envidoAccumulated: 0,
     envidoLastCall: null, envidoNoQuiero: 0,
     trucoCaller: null, envidoCaller: null,
-    envidoResolved: false, tricksPlayedThisHand: 0,
+    envidoResolved: false, florSung: false, tricksPlayedThisHand: 0,
     gamePhase: 'playing',
     envidoPointsCall: undefined,
     botToast: undefined,
@@ -110,7 +99,6 @@ function dealNewHand(gs: GameState, leaderIndex: number): GameState {
   const { deck, hands } = buildHands(gs.players)
   const messages: GameMessage[] = [...gs.messages, msg('info', '── Nueva mano ──')]
   const puntos = { ...gs.puntos }
-  awardFlorPoints(gs.players, hands, puntos, messages)
   const winner = gs.players.find((p) => (puntos[p.userId] || 0) >= gs.targetPoints)?.userId ?? null
   const next = leaderIndex >= 0 && leaderIndex < gs.players.length ? leaderIndex : 0
   return {
@@ -121,7 +109,7 @@ function dealNewHand(gs: GameState, leaderIndex: number): GameState {
     trucoLevel: 0, envidoLevel: 0, envidoAccumulated: 0,
     envidoLastCall: null, envidoNoQuiero: 0,
     trucoCaller: null, envidoCaller: null,
-    envidoResolved: false, tricksPlayedThisHand: 0,
+    envidoResolved: false, florSung: false, tricksPlayedThisHand: 0,
     gamePhase: winner ? 'finished' : 'playing',
     envidoPointsCall: undefined,
     handResult: undefined, pendingDeal: undefined,
@@ -452,6 +440,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       // se juegue la segunda carta (regla estándar: permitido con 0 o 1 carta
       // en mesa, prohibido una vez que ambos tiraron / la 1ª baza se completó).
       if (gs.envidoResolved || gs.tricksPlayedThisHand > 0 || gs.currentManoIndex > 0) return state
+      // Si hay flor en juego, el envido no se puede cantar (la flor lo bloquea)
+      if (hasFlorInPlay(gs)) return state
       const ci = gs.players.findIndex((p) => p.userId === playerId)
       const ri = (ci + 1) % gs.players.length
       const isFirst = gs.envidoLevel === 0
@@ -498,6 +488,31 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           preBidPlayerIndex: ci,
           botToast: undefined,
           messages: [...gs.messages, msg('warning', `¡${gs.players[ci]?.username} canta ${label}!`, playerId)],
+        },
+      }
+    })
+  },
+
+  callFlor: (playerId) => {
+    set((state) => {
+      if (!state.gameState) return state
+      const gs = state.gameState
+      const pi = gs.players.findIndex((p) => p.userId === playerId)
+      if (pi < 0) return state
+      // Solo en el turno propio, durante la primera baza y si aún no se cantó.
+      // La flor suma 3 puntos al instante; no hay "quiero / no quiero".
+      if (gs.gamePhase !== 'playing' || gs.currentTurn !== playerId || gs.florSung) return state
+      if (gs.tricksPlayedThisHand > 0 || gs.currentManoIndex > 0) return state
+      if (!hasFlor(gs.hands[pi])) return state
+      const puntos = { ...gs.puntos }
+      puntos[playerId] = (puntos[playerId] || 0) + 3
+      const messages = [...gs.messages, msg('success', `🌸 ¡${gs.players[pi].username} canta Flor! +3 pts`, playerId)]
+      sayCall('¡Flor!', { excited: true })
+      const winner = gs.players.find((p) => (puntos[p.userId] || 0) >= gs.targetPoints)?.userId ?? null
+      return {
+        gameState: {
+          ...gs, puntos, messages, florSung: true, winner,
+          gamePhase: winner ? 'finished' : gs.gamePhase,
         },
       }
     })
@@ -674,8 +689,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     const currentPlayer = gs.players.find((p) => p.userId === gs.currentTurn)
     if (!currentPlayer?.isBot) return
 
-    // Use a short but visible delay so the human sees the "Pensando..." state
-    const delay = gs.gamePhase === 'playing' ? 900 : 700
+    // Delay visible pero pausado: el humano alcanza a ver el "Pensando..."
+    // y la carta del bot antes de que juegue la siguiente.
+    const delay = gs.gamePhase === 'playing' ? 1300 : 1000
 
     setTimeout(() => {
       // Re-read fresh state inside the timeout — stale state from closure is the #1 bug
@@ -778,11 +794,25 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         const ev = calculateEnvido(hand)
         const { best, strongCount, byStrength, byWeakness } = handStrength(hand)
 
-        // Antes de la primera baza: quizá cantar envido (solo si aún se puede)
+        // ── Flor: si el bot tiene flor la canta apenas puede (turno propio,
+        //    primera baza). Suma 3 pts al instante y bloquea el envido de la mano.
+        const sangFlor = !fgs.florSung && fgs.tricksPlayedThisHand === 0 && fgs.currentManoIndex === 0 && hasFlor(hand)
+        if (sangFlor) {
+          // La flor NO cambia el turno: la cadena de abajo re-dispara botPlay con
+          // su delay y el bot juega su carta. El resto (envido/truco/carta) se
+          // saltea este tick para que haya pausa entre el canto y la carta.
+          get().callFlor(botId)
+        }
+
+        // Resto de decisiones: solo si no cantó flor en este tick.
+        if (!sangFlor) {
+        // Antes de la primera baza: quizá cantar envido (solo si aún se puede
+        // y no hay flor en juego)
         if (
           !fgs.envidoResolved &&
           fgs.envidoLevel === 0 &&
           fgs.tricksPlayedThisHand === 0 &&
+          !fgs.players.some((_, i) => hasFlor(fgs.hands[i])) &&
           ev.value >= 20
         ) {
           const prob = ev.value >= 28 ? 0.75 : ev.value >= 24 ? 0.55 : 0.3
@@ -872,6 +902,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         }
 
         get().playCard(botId, cardToPlay)
+        }
       }
 
       // ── Chain: si el bot conservó el turno (ganó la baza como segundo y juega

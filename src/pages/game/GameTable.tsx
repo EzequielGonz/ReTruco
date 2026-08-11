@@ -45,7 +45,7 @@ function LogBody({ messages, logRef, maxHeight }: {
 }
 import { useGameStore } from '../../stores/gameStore'
 import { calculateEnvido, getTrucoPoints, hasFlor } from '../../utils/trucoRules'
-import { setSoundsEnabled, sayCall } from '../../utils/sounds'
+import { setSoundsEnabled } from '../../utils/sounds'
 import SpanishCard from '../../components/game/SpanishCard'
 import CardHand from '../../components/game/CardHand'
 import BotArea from '../../components/game/BotArea'
@@ -437,7 +437,7 @@ export default function GameTable() {
   const {
     gameState, isPlaying, isDealing, finishDealing, clearBotToast,
     playCard, callTruco, acceptTruco, rejectTruco,
-    callEnvido, acceptEnvido, rejectEnvido, announceEnvidoPoints,
+    callEnvido, callFlor, acceptEnvido, rejectEnvido, announceEnvidoPoints,
     goToDeck, botPlay, resetGame, continueAfterHandResult,
   } = useGameStore()
 
@@ -616,9 +616,17 @@ export default function GameTable() {
   const canCallTruco      = isPhase('playing') && isMyTurn && gameState.trucoLevel === 0
   const canCallRetruco    = isPhase('playing') && isMyTurn && gameState.trucoLevel === 1 && !humanCalledTruco
   const canCallValeCuatro = isPhase('playing') && isMyTurn && gameState.trucoLevel === 2 && !humanCalledTruco
+  // Flor: el que tiene flor bloquea el envido de la mano (regla estándar)
+  const hasFlorThisHand = humanIndex >= 0 && gameState.hands[humanIndex]
+    ? hasFlor(gameState.hands[humanIndex])
+    : false
+  const florInPlay = gameState.players.some((_, i) => hasFlor(gameState.hands[i]))
+
   // El envido solo se puede cantar durante la primera baza (0 o 1 carta en mesa)
+  // y solo si no hay flor en juego
   const canCallEnvido     = isPhase('playing') && isMyTurn && gameState.envidoLevel === 0
                             && !gameState.envidoResolved
+                            && !florInPlay
                             && gameState.tricksPlayedThisHand === 0
                             && gameState.currentManoIndex === 0
   const humanEnvido = humanIndex >= 0 && gameState.hands[humanIndex]
@@ -630,15 +638,15 @@ export default function GameTable() {
     && (canCallTruco || canCallRetruco || canCallValeCuatro || canCallEnvido || canGoToDeck)
 
   // Barra de cantos (estilo Truco Blyts)
-  const hasFlorThisHand = humanIndex >= 0 && gameState.hands[humanIndex]
-    ? hasFlor(gameState.hands[humanIndex])
-    : false
+  const canSingFlor = isPhase('playing') && isMyTurn && hasFlorThisHand && !gameState.florSung
+    && gameState.tricksPlayedThisHand === 0 && gameState.currentManoIndex === 0
   const trucoSub = gameState.trucoLevel > 0
     ? `${['', 'Truco', 'Retruco', 'Vale 4'][gameState.trucoLevel]} · ${getTrucoPoints(gameState.trucoLevel)} pts`
     : undefined
   const envidoSub = gameState.envidoLevel > 0 && !gameState.envidoResolved
     ? `En juego: ${gameState.envidoAccumulated} pts`
-    : canCallEnvido ? `Tu envido: ${humanEnvido.value}` : undefined
+    : canCallEnvido ? `Tu envido: ${humanEnvido.value}`
+    : florInPlay && !gameState.envidoResolved ? 'Bloqueado por Flor' : undefined
 
   // (tableCards unused — table now reads directly from gameState.manos)
 
@@ -1029,13 +1037,13 @@ export default function GameTable() {
                         onClick={() => setOpenMenu(openMenu === 'envido' ? null : 'envido')} />
                       <MainActionBtn label="🌸 Flor"
                         sub={isMobile
-                          ? (hasFlorThisHand ? '+3 pts' : 'Sin flor')
-                          : (hasFlorThisHand ? 'Cantada · +3 pts' : '3 del mismo palo')}
+                          ? (gameState.florSung ? '+3 ✓' : hasFlorThisHand ? '+3' : 'Sin flor')
+                          : (gameState.florSung ? 'Ya cantada · +3 ✓' : hasFlorThisHand ? 'Cantá para sumar +3' : '3 del mismo palo')}
                         small={isMobile}
-                        enabled={hasFlorThisHand}
+                        enabled={canSingFlor}
                         color="#ec4899"
-                        badge={hasFlorThisHand ? '+3 ✓' : undefined}
-                        onClick={() => sayCall('¡Flor!', { excited: true })} />
+                        badge={canSingFlor ? '+3 ✓' : (gameState.florSung ? '+3' : undefined)}
+                        onClick={() => { callFlor(humanPlayer!.userId); setOpenMenu(null) }} />
                       <MainActionBtn label="🛡 Al mazo" small={isMobile}
                         enabled={canGoToDeck}
                         color="#94a3b8"
@@ -1130,10 +1138,12 @@ export default function GameTable() {
                 { label:'Baza', value:`${gameState.currentManoIndex+1}/3` },
                 { label:'Truco', value:['—','Truco','Retruco','Vale4'][gameState.trucoLevel] },
                 { label:'Envido', value: gameState.envidoResolved ? '✓'
+                  : florInPlay ? '✗'
                   : gameState.envidoLevel === 3 ? 'Falta'
                   : gameState.envidoLastCall === 'real' ? 'Real'
                   : gameState.envidoLevel === 2 ? 'Envido x2'
                   : gameState.envidoLevel === 1 ? 'Envido' : '—' },
+                { label:'Flor', value: gameState.florSung ? '✓' : (florInPlay ? 'En mano' : '—') },
               ].map(({ label, value }) => (
                 <div key={label} className="flex justify-between items-center gap-1">
                   <span style={{ color:'var(--color-text-muted)' }}>{label}</span>
@@ -1143,7 +1153,7 @@ export default function GameTable() {
             </div>
 
             {/* Envido hint when relevant */}
-            {!gameState.envidoResolved && gameState.tricksPlayedThisHand === 0 && isMyTurn && isPhase('playing') && (
+            {!gameState.envidoResolved && !florInPlay && gameState.tricksPlayedThisHand === 0 && isMyTurn && isPhase('playing') && (
               <div className="pt-1.5 border-t text-center" style={{ borderColor:'rgba(255,255,255,0.08)' }}>
                 <span style={{ color:'#60a5fa' }}>Tu envido</span>
                 <div className="text-lg font-black" style={{ color:'#38bdf8', fontFamily:'Playfair Display,serif' }}>

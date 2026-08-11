@@ -58,6 +58,8 @@ export interface GameState {
   envidoCaller: string | null
   // Whether envido has been resolved already this hand
   envidoResolved: boolean
+  // Whether flor was sung this hand (blocks envido)
+  florSung: boolean
   // Number of tricks played this hand (to block envido after 1st trick)
   tricksPlayedThisHand: number
   gamePhase: 'truco' | 'envido' | 'envido_points' | 'playing' | 'hand_result' | 'finished'
