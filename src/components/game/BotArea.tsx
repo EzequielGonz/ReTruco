@@ -5,16 +5,17 @@ interface BotAreaProps {
   username: string
   cardsCount: number
   isActive: boolean
+  compact?: boolean
 }
 
 const DUMMY_CARD = { suit: 'espadas' as const, rank: 1 as const, value: 1, power: 1 }
 
-export default function BotArea({ username, cardsCount, isActive }: BotAreaProps) {
+export default function BotArea({ username, cardsCount, isActive, compact = false }: BotAreaProps) {
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className={`flex flex-col items-center ${compact ? 'gap-1.5' : 'gap-4'}`}>
 
       {/* Avatar + name row */}
-      <div className="flex items-center gap-3">
+      <div className={`flex items-center ${compact ? 'gap-2' : 'gap-3'}`}>
         <motion.div
           animate={isActive ? {
             boxShadow: [
@@ -24,7 +25,7 @@ export default function BotArea({ username, cardsCount, isActive }: BotAreaProps
             ],
           } : { boxShadow: '0 0 0 0 rgba(0,0,0,0)' }}
           transition={{ duration: 1.6, repeat: Infinity }}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+          className={`rounded-full flex items-center justify-center ${compact ? 'w-8 h-8 text-base' : 'w-10 h-10 text-lg'}`}
           style={{
             background: isActive
               ? 'linear-gradient(135deg,#d4af37,#8a7030)'
@@ -68,24 +69,24 @@ export default function BotArea({ username, cardsCount, isActive }: BotAreaProps
 
       {/* Face-down hand fan */}
       {cardsCount > 0 ? (
-        <div className="relative flex items-end justify-center" style={{ height: 90 }}>
+        <div className="relative flex items-end justify-center" style={{ height: compact ? 52 : 90 }}>
           {Array.from({ length: cardsCount }, (_, i) => {
-            const totalSpread = Math.min(20, cardsCount * 8)
+            const totalSpread = Math.min(compact ? 14 : 20, cardsCount * (compact ? 6 : 8))
             const angle = cardsCount > 1 ? -totalSpread / 2 + i * (totalSpread / (cardsCount - 1)) : 0
-            const yOffset = Math.pow(Math.abs(angle) / (totalSpread / 2 + 1), 1.5) * 14
+            const yOffset = Math.pow(Math.abs(angle) / (totalSpread / 2 + 1), 1.5) * (compact ? 7 : 14)
             return (
               <motion.div key={i}
                 initial={{ opacity: 0, y: -50, rotate: angle }}
                 animate={{ opacity: 1, y: yOffset, rotate: angle }}
                 transition={{ delay: i * 0.08, type: 'spring', stiffness: 280, damping: 22 }}
                 style={{
-                  marginLeft: i > 0 ? -28 : 0,
+                  marginLeft: i > 0 ? (compact ? -20 : -28) : 0,
                   zIndex: i,
                   transformOrigin: 'bottom center',
                   filter: isActive ? 'drop-shadow(0 4px 12px rgba(212,175,55,0.3))' : 'none',
                   transition: 'filter 0.4s',
                 }}>
-                <SpanishCard card={DUMMY_CARD} faceDown size="small" />
+                <SpanishCard card={DUMMY_CARD} faceDown size={compact ? 'tiny' : 'small'} />
               </motion.div>
             )
           })}

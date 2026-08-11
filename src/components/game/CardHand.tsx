@@ -36,13 +36,13 @@ export default function CardHand({
   // Fan spread: wider for more cards, tighter for fewer
   const totalSpread = Math.min(18, count * 7)
   const angleStep   = count > 1 ? totalSpread / (count - 1) : 0
-  // Overlap: tighter on mobile via size
-  const overlapPx = size === 'medium' ? 30 : size === 'large' ? 38 : 22
-  // Height of the fan container
-  const containerH = size === 'medium' ? 170 : size === 'large' ? 210 : 130
+  // Overlap: cartas más grandes → más superposición para que entren
+  const overlapPx = size === 'large' ? 36 : size === 'medium' ? 28 : 22
+  // Height of the fan container (justo sobre las cartas, sin relleno extra)
+  const containerH = size === 'large' ? 176 : size === 'medium' ? 138 : 118
 
   return (
-    <div className="relative flex items-end justify-center" style={{ height: containerH + 20 }}>
+    <div className="relative flex items-end justify-center" style={{ height: containerH }}>
       {cards.map((card, i) => {
         const angle = count > 1 ? -totalSpread / 2 + i * angleStep : 0
         // Cards at the extremes dip lower to simulate a held fan
@@ -76,28 +76,10 @@ export default function CardHand({
               isPlayable={canPlay}
               disabled={disabled || !isMyTurn}
               onClick={() => canPlay && onPlayCard(card)}
-              showPower={canPlay}
             />
           </motion.div>
         )
       })}
-
-      {/* "Tu turno" floating indicator */}
-      {canPlay && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-xs font-semibold tracking-widest whitespace-nowrap pointer-events-none"
-          style={{ color: 'var(--color-gold)', letterSpacing: '0.18em' }}
-        >
-          <motion.span
-            animate={{ opacity: [0.6, 1, 0.6] }}
-            transition={{ duration: 1.6, repeat: Infinity }}
-          >
-            ▲ ELEGÍ UNA CARTA ▲
-          </motion.span>
-        </motion.div>
-      )}
     </div>
   )
 }

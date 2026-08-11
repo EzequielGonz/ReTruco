@@ -32,6 +32,16 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <Routes>
+      {/* La mesa de juego es pantalla completa: va FUERA del Layout para
+          no duplicar el header global ni el fondo de partículas. */}
+      <Route
+        path="game"
+        element={
+          <ProtectedRoute>
+            <GameTable />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/" element={<Layout />}>
         <Route index element={<Home />} />
         <Route
@@ -71,14 +81,6 @@ function App() {
           element={
             <ProtectedRoute>
               <Table />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="game"
-          element={
-            <ProtectedRoute>
-              <GameTable />
             </ProtectedRoute>
           }
         />

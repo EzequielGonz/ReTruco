@@ -328,6 +328,13 @@
     color: var(--color-text-muted);
   }
 
+  /* Mesa de juego: altura del viewport con fallback para navegadores viejos */
+  .game-table-viewport {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+
   /* Felt texture (game table) */
   .felt-bg {
     background-color: var(--color-felt);
@@ -385,6 +392,7 @@
   .ring-gold {
     box-shadow: 0 0 0 2px var(--color-gold), 0 0 20px rgba(212, 175, 55, 0.4);
   }
+
 }
 
 /* ─── Utilities ─── */

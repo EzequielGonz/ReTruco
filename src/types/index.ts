@@ -60,7 +60,11 @@ export interface GameState {
   envidoResolved: boolean
   // Number of tricks played this hand (to block envido after 1st trick)
   tricksPlayedThisHand: number
-  gamePhase: 'truco' | 'envido' | 'envido_points' | 'playing' | 'finished'
+  gamePhase: 'truco' | 'envido' | 'envido_points' | 'playing' | 'hand_result' | 'finished'
+  // Pendiente de repartir una mano nueva (se muestra el resultado ~2s antes)
+  pendingDeal?: { leaderIndex: number; gs: GameState }
+  // Resultado de la mano/ronda que se está mostrando (banner)
+  handResult?: { winnerId: string; points: number; reason: 'mano' | 'no-quiero' | 'mazo' }
   envidoPointsCall?: { playerId: string; points: number }
   // Toast shown when bot responds to a bid (quiero/no quiero)
   botToast?: { text: string; color: string; id: string }

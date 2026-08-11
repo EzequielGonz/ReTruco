@@ -5,6 +5,7 @@ import {
   calculateEnvido, hasFlor, determineManoWinner,
   getCardPower, getTrucoPoints, getEnvidoPoints,
 } from '../utils/trucoRules'
+import { sayCall } from '../utils/sounds'
 
 type TrucoLevel = 0 | 1 | 2 | 3
 type EnvidoLevel = 0 | 1 | 2 | 3
@@ -27,6 +28,8 @@ interface GameStoreState {
   botPlay: () => void
   finishDealing: () => void
   clearBotToast: () => void
+  // Reparte la mano nueva pendiente tras mostrar el resultado de la ronda
+  continueAfterHandResult: () => void
 }
 
 const msg = (type: GameMessage['type'], text: string, playerId?: string): GameMessage => ({
@@ -65,8 +68,17 @@ function awardFlorPoints(
     if (hasFlor(hands[i])) {
       puntos[p.userId] = (puntos[p.userId] || 0) + 3
       messages.push(msg('success', `🌸 ¡${p.username} tiene Flor! +3 pts`))
+      sayCall('¡Flor!', { excited: true })
     }
   })
+}
+
+/**
+ * Probabilidad aproximada de que un tanto de envido le gane al rival
+ * (el rival reparte uniforme entre 4 y 33, figuras valen 0).
+ */
+function envidoWinProb(value: number): number {
+  return Math.min(0.95, Math.max(0.05, (value - 4) / 29))
 }
 
 function createInitialState(players: Player[], targetPoints: number): GameState {
@@ -112,6 +124,7 @@ function dealNewHand(gs: GameState, leaderIndex: number): GameState {
     envidoResolved: false, tricksPlayedThisHand: 0,
     gamePhase: winner ? 'finished' : 'playing',
     envidoPointsCall: undefined,
+    handResult: undefined, pendingDeal: undefined,
     botToast: undefined,
     currentTurn: gs.players[next].userId,
   }
@@ -211,6 +224,16 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   resetGame: () => set({ gameState: null, isPlaying: false, isDealing: true }),
   clearBotToast: () => set((s) => s.gameState ? { gameState: { ...s.gameState, botToast: undefined } } : s),
 
+  continueAfterHandResult: () => {
+    set((state) => {
+      const gs = state.gameState
+      if (!gs || gs.gamePhase !== 'hand_result' || !gs.pendingDeal) return state
+      const { leaderIndex, gs: base } = gs.pendingDeal
+      const nextState = dealNewHand(base, leaderIndex)
+      return { gameState: nextState, isDealing: !nextState.winner }
+    })
+  },
+
   playCard: (playerId, card) => {
     set((state) => {
       if (!state.gameState) return state
@@ -259,6 +282,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           nextPi = gs.players.findIndex((p) => p.userId === trickWinner)
         } else {
           msgs.push(msg('info', `Baza ${manoIdx + 1} parda (empate).`))
+          sayCall('¡Parda!')
           // On tie, mano player (preBidPlayerIndex at hand start) leads next trick
           nextPi = gs.preBidPlayerIndex
         }
@@ -272,25 +296,39 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           puntos[handWinnerId] = (puntos[handWinnerId] || 0) + pts
           const wName = gs.players.find((p) => p.userId === handWinnerId)?.username
           msgs.push(msg('success', `¡${wName} gana la mano! (+${pts} pt${pts !== 1 ? 's' : ''})`))
+          sayCall(`¡${wName} gana la mano!`, { excited: true })
 
           if (puntos[handWinnerId] >= gs.targetPoints) {
             winner = handWinnerId
+            // Game won
+            return {
+              gameState: {
+                ...gs, hands: newHands, manos: newManos, puntos, winner,
+                tricksPlayedThisHand: tricks,
+                currentTurn: gs.players[nextPi]?.userId ?? gs.currentTurn,
+                gamePhase: 'finished', messages: msgs,
+                handResult: undefined, pendingDeal: undefined,
+              },
+            }
           }
 
-          if (!winner) {
-            // Deal new hand — winner of this hand leads next
-            const winnerPi = gs.players.findIndex((p) => p.userId === handWinnerId)
-            const nextState = dealNewHand({ ...gs, hands: newHands, manos: newManos, puntos, messages: msgs }, winnerPi)
-            return { gameState: nextState, isDealing: !nextState.winner }
-          }
-          // Game won
+          // La mano terminó: se muestran las cartas ganadoras/perdedoras en la
+          // mesa ~2s (fase 'hand_result') y DESPUÉS se reparte la mano nueva.
+          const winnerPi = gs.players.findIndex((p) => p.userId === handWinnerId)
           return {
             gameState: {
-              ...gs, hands: newHands, manos: newManos, puntos, winner,
+              ...gs, hands: newHands, manos: newManos, puntos, winner: null,
               tricksPlayedThisHand: tricks,
-              currentTurn: gs.players[nextPi]?.userId ?? gs.currentTurn,
-              gamePhase: 'finished', messages: msgs,
+              currentTurn: '', currentPlayerIndex: winnerPi,
+              gamePhase: 'hand_result',
+              handResult: { winnerId: handWinnerId, points: pts, reason: 'mano' },
+              pendingDeal: {
+                leaderIndex: winnerPi,
+                gs: { ...gs, hands: newHands, manos: newManos, puntos, messages: msgs },
+              },
+              messages: msgs,
             },
+            isDealing: false,
           }
         }
 
@@ -321,6 +359,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const ci = gs.players.findIndex((p) => p.userId === playerId)
       const ri = (ci + 1) % gs.players.length
       const lvl = ['', 'Truco', 'Retruco', '¡Vale Cuatro!'][level]
+      sayCall(`¡${lvl}!`, { excited: true })
       return {
         gameState: {
           ...gs,
@@ -343,6 +382,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         : gs.preBidPlayerIndex
       const resumeI = callerI >= 0 ? callerI : 0
       const acceptorIsBot = gs.players.find((p) => p.userId === playerId)?.isBot
+      sayCall('¡Quiero!')
       return {
         gameState: {
           ...gs,
@@ -370,20 +410,35 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         const logMsg = msg('error',
           `${gs.players.find((p) => p.userId === playerId)?.username}: ¡No Quiero! ${callerName} gana ${pts} pt${pts !== 1 ? 's' : ''}. La ronda termina.`,
           playerId)
+        sayCall('¡No quiero!')
         if (gw) {
           return {
             gameState: {
               ...gs, puntos, winner: gw, gamePhase: 'finished',
               botToast: acceptorIsBot ? toast('¡No Quiero! 🚫', '#ef4444') : gs.botToast,
               messages: [...gs.messages, logMsg],
+              handResult: undefined, pendingDeal: undefined,
             },
           }
         }
-        // Al no querer el truco, la RONDA TERMINA: se reparte mano nueva
-        // liderada por quien cobró los puntos
+        // Al no querer el truco la RONDA TERMINA: se muestra un instante el
+        // resultado y después se reparte la mano nueva, liderada por quien cobró.
         const callerPi = gs.players.findIndex((p) => p.userId === callerId)
-        const nextState = dealNewHand({ ...gs, puntos, messages: [...gs.messages, logMsg] }, callerPi)
-        return { gameState: nextState, isDealing: !nextState.winner }
+        return {
+          gameState: {
+            ...gs, puntos, winner: null,
+            currentTurn: '', currentPlayerIndex: callerPi,
+            gamePhase: 'hand_result',
+            handResult: { winnerId: callerId, points: pts, reason: 'no-quiero' },
+            pendingDeal: {
+              leaderIndex: callerPi,
+              gs: { ...gs, puntos, messages: [...gs.messages, logMsg] },
+            },
+            messages: [...gs.messages, logMsg],
+            botToast: acceptorIsBot ? toast('¡No Quiero! 🚫', '#ef4444') : gs.botToast,
+          },
+          isDealing: false,
+        }
       }
       return state
     })
@@ -433,6 +488,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         label = 'Envido'
       }
 
+      sayCall(`¡${label}!`, { excited: true })
       return {
         gameState: {
           ...gs,
@@ -456,6 +512,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         : gs.preBidPlayerIndex
       const resumeI = callerI >= 0 ? callerI : 0
       const acceptorIsBot = gs.players.find((p) => p.userId === playerId)?.isBot
+      sayCall('¡Quiero!')
       return {
         gameState: {
           ...gs, gamePhase: 'envido_points',
@@ -482,6 +539,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         const callerName = gs.players.find((p) => p.userId === callerId)?.username
         const gw = puntos[callerId] >= gs.targetPoints ? callerId : null
         const resumeI = gs.preBidPlayerIndex
+        sayCall('¡No quiero!')
         return {
           gameState: {
             ...gs, puntos, winner: gw, envidoResolved: true,
@@ -529,6 +587,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         puntos[winnerId] = (puntos[winnerId] || 0) + pts
         const gw = puntos[winnerId] >= gs.targetPoints ? winnerId : null
         const resumeI = gs.preBidPlayerIndex
+        // El que responde canta sus puntos en el mensaje visible ("El Bot: Tengo 27 —
+        // ¡Gana!"). El audio anuncia al ganador (cortaría el "Tengo" si se dijera acá).
+        sayCall(`¡Gano el envido! +${pts}`, { excited: true })
 
         return {
           gameState: {
@@ -545,6 +606,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         }
       } else {
         // First player announces
+        sayCall(`Tengo ${myEnvido.value}`)
         return {
           gameState: {
             ...gs,
@@ -574,13 +636,27 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           gameState: {
             ...gs, puntos, winner: gw, gamePhase: 'finished',
             messages: [...gs.messages, logMsg],
+            handResult: undefined, pendingDeal: undefined,
           },
         }
       }
-      // Se reparte una mano nueva, liderada por quien ganó los puntos
+      // El rival se fue al mazo: se muestra el resultado y después se reparte
+      // la mano nueva, liderada por quien ganó los puntos.
       const oppPi = opp ? gs.players.findIndex((p) => p.userId === opp.userId) : 0
-      const nextState = dealNewHand({ ...gs, puntos, messages: [...gs.messages, logMsg] }, oppPi)
-      return { gameState: nextState, isDealing: !nextState.winner }
+      return {
+        gameState: {
+          ...gs, puntos, winner: null,
+          currentTurn: '', currentPlayerIndex: oppPi,
+          gamePhase: 'hand_result',
+          handResult: { winnerId: opp?.userId ?? '', points: pts, reason: 'mazo' },
+          pendingDeal: {
+            leaderIndex: oppPi,
+            gs: { ...gs, puntos, messages: [...gs.messages, logMsg] },
+          },
+          messages: [...gs.messages, logMsg],
+        },
+        isDealing: false,
+      }
     })
   },
 
@@ -591,6 +667,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     // Guard: si la partida ya terminó no hay nada que jugar (evita loops de timers)
     const gs = s.gameState
     if (gs.gamePhase === 'finished' || gs.winner) return
+    // Fase de resultado de mano: nadie juega hasta repartir la mano nueva
+    if (gs.gamePhase === 'hand_result') return
 
     // Guard: only schedule if the bot is actually the current player right now
     const currentPlayer = gs.players.find((p) => p.userId === gs.currentTurn)
@@ -612,7 +690,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!fgs.players[bi]?.isBot) return
 
       const hand = fgs.hands[bi]
-      if (!hand || hand.length === 0) return
+      if (!hand) return
+      // OJO: NO se puede salir acá con hand vacía — el bot puede tener que
+      // RESPONDER un truco/envido sin cartas (p.ej. el humano canta truco en
+      // la baza decisiva cuando el bot ya jugó sus 3 cartas). Solo el branch
+      // de 'playing' (jugar carta) necesita cartas.
 
       const humanId = fgs.players.find((p) => !p.isBot)?.userId ?? ''
       const myScore = fgs.puntos[botId] || 0
@@ -620,43 +702,42 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
       // ── envido_points: bot announces or responds ─────────
       if (fgs.gamePhase === 'envido_points') {
-        const ev = calculateEnvido(hand)
-        if (fgs.envidoPointsCall) {
-          // Responding: son buenas if my score ≤ caller's score
-          get().announceEnvidoPoints(botId, ev.value <= fgs.envidoPointsCall.points)
-        } else {
-          // Announcing first
-          get().announceEnvidoPoints(botId, false)
-        }
+        // El bot SIEMPRE anuncia sus puntos ("Tengo 27") — nunca se achica
+        // diciendo "Son buenas". Así el rival siempre ve el tanto del bot.
+        get().announceEnvidoPoints(botId, false)
       }
 
       // ── envido: bot responds to human's envido call ──────
       else if (fgs.gamePhase === 'envido') {
         const ev = calculateEnvido(hand)
-        const last = fgs.envidoLastCall
+        const pWin = envidoWinProb(ev.value)
+        const callerScore = fgs.puntos[fgs.envidoCaller || ''] || 0
+        // Para la falta envido el monto es lo que le falta al que canta;
+        // para el resto, los puntos acumulados por las escaladas.
+        const stake = fgs.envidoLevel === 3
+          ? fgs.targetPoints - callerScore
+          : fgs.envidoAccumulated
+        const trailing = myScore < oppScore
+        const farAhead = myScore >= oppScore + 5
+
         if (fgs.envidoLevel === 3) {
-          // Falta envido: el monto depende de cuánto le falta al que cantó
-          const callerScore = fgs.puntos[fgs.envidoCaller || ''] || 0
-          const stake = fgs.targetPoints - callerScore
-          if (ev.value >= 27 && Math.random() < 0.6) get().acceptEnvido(botId)
-          else if (stake <= 4 && ev.value >= 22 && Math.random() < 0.6) get().acceptEnvido(botId)
+          // Falta envido: aceptar solo con mano muy buena o monto chico
+          if (pWin >= 0.62 || (stake <= 3 && pWin >= 0.5)) get().acceptEnvido(botId)
           else get().rejectEnvido(botId)
-        } else if (fgs.envidoLevel === 1 && ev.value >= 27 && Math.random() < 0.5) {
-          // Envido → Real Envido (2+3=5)
-          get().callEnvido(botId, 'real')
-        } else if (fgs.envidoLevel === 1 && ev.value >= 24 && Math.random() < 0.4) {
-          // Envido → Envido repetido (doble, 2+2=4)
-          get().callEnvido(botId, 'envido')
-        } else if (fgs.envidoLevel === 2 && last === 'envido' && ev.value >= 28 && Math.random() < 0.5) {
-          // Doble → Real Envido (4+3=7)
-          get().callEnvido(botId, 'real')
-        } else if (fgs.envidoLevel === 2 && ev.value >= 28 && myScore <= oppScore && Math.random() < 0.4) {
-          // → Falta Envido (perdiendo o empatados)
-          get().callEnvido(botId, 'falta')
-        } else if (ev.value >= 20 && Math.random() < 0.7) {
-          get().acceptEnvido(botId)
+        } else if (!farAhead && ev.value >= 26 && Math.random() < 0.5) {
+          // Escalada: doble envido (si ya se cantó uno) o real envido
+          const raise: 'envido' | 'real' =
+            fgs.envidoLevel === 2 ? 'real' : (Math.random() < 0.5 ? 'envido' : 'real')
+          get().callEnvido(botId, raise)
         } else {
-          get().rejectEnvido(botId)
+          // Valor esperado de aceptar = (2P - 1) * monto. Si es positivo
+          // (o vamos perdiendo y necesitamos puntos) conviene aceptar.
+          const evAccept = (2 * pWin - 1) * stake
+          const accept = pWin >= 0.9
+            || (evAccept > 0 && (pWin >= 0.5 || trailing))
+            || (stake <= 2 && pWin >= 0.5)
+          if (accept) get().acceptEnvido(botId)
+          else get().rejectEnvido(botId)
         }
       }
 
@@ -666,12 +747,17 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         const botWins = fgs.manos.filter((m, i) => i < fgs.currentManoIndex && m.winner === botId).length
         const humanWins = fgs.manos.filter((m, i) => i < fgs.currentManoIndex && m.winner === humanId).length
         const rnd = Math.random()
-        if (fgs.trucoLevel < 3 && strongCount >= 2 && best <= 4 && rnd < 0.5) {
+        const leading = myScore >= oppScore + 5
+        const trailing = oppScore >= myScore + 5
+        if (fgs.trucoLevel < 3 && strongCount >= 2 && best <= 4 && rnd < 0.45) {
           // Mano muy fuerte: subir la apuesta
           get().callTruco(botId, (fgs.trucoLevel + 1) as TrucoLevel)
-        } else if (strongCount >= 2 || botWins >= 1) {
-          // Mano fuerte o ya ganó una baza: aceptar casi siempre
+        } else if (botWins >= 1 || strongCount >= 2 || (trailing && strongCount >= 1)) {
+          // Ya ganó una baza, mano fuerte, o va perdiendo con algo de mano: aceptar
           get().acceptTruco(botId)
+        } else if (leading && strongCount <= 1) {
+          // Va muy arriba: no regalar puntos al rival
+          get().rejectTruco(botId)
         } else if (strongCount === 1) {
           // Una carta fuerte: decisión 50/50
           if (rnd < 0.5) get().acceptTruco(botId)
@@ -688,6 +774,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
       // ── playing: bot's turn to play or call ─────────────
       else if (fgs.gamePhase === 'playing') {
+        if (hand.length === 0) return // sin cartas no puede jugar (ni cantar)
         const ev = calculateEnvido(hand)
         const { best, strongCount, byStrength, byWeakness } = handStrength(hand)
 
@@ -751,8 +838,18 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
               // Ganar la baza con la carta más débil que alcance (conserva las fuertes)
               cardToPlay = winningCards[0]
             } else {
-              // No puede ganar: tirar la más débil y guardar las fuertes
-              cardToPlay = byWeakness[0]
+              // No puede ganar la baza. Si empatar LE DA LA MANO (ganó la 1ª baza
+              // y esta es la 2ª: "ganás la 1ª y empatás la 2ª → ganás la mano"),
+              // juega la carta del mismo poder para forzar la parda en vez de
+              // regalar una carta fuerte.
+              const tieCard = hand.find((c) => c.power === humanCard.power)
+              const tieWinsHand = botWins >= 1 && trickIndex === 1
+              if (tieCard && tieWinsHand) {
+                cardToPlay = tieCard
+              } else {
+                // No puede ganar: tirar la más débil y guardar las fuertes
+                cardToPlay = byWeakness[0]
+              }
             }
           } else {
             cardToPlay = byWeakness[0]
